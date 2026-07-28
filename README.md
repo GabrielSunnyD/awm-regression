@@ -7,6 +7,10 @@ for every Austrian municipality:
 gkz,exposure,data_found
 ```
 
+The official abbreviation is **GKZ** (*Gemeindekennziffer*), not GZK. The
+result is an ever-exposed cross-section, not a municipality-year treatment
+panel.
+
 `exposure=1` when at least one reviewed source supports direct municipal
 exposure, a municipality contract overlaps a participant's court-supported
 infringement period, or association membership overlaps a reviewed association
@@ -31,6 +35,9 @@ writes:
 - `data/processed/municipality_exposure_audit.csv` — rule flags, counts, and
   positive source IDs.
 
+Pass `--omit-data-found` to `awm-exposure` for a two-column main output or
+`--no-audit` to skip the audit file.
+
 Use `uv run awm-sources all --refresh` only when you intentionally want to
 replace cached source snapshots with the latest server copies. Changed
 checksums are recorded in `data/sources/download_manifest.json`.
@@ -51,6 +58,17 @@ The project keeps three layers separate:
 3. Generated `data/raw/*.csv` contains GKZ-normalized inputs for the exposure
    classifier.
 
+The generated inputs are:
+
+| File | Role |
+|---|---|
+| `municipalities.csv` | Complete municipality universe for one territorial vintage |
+| `direct_evidence.csv` | Municipalities explicitly evaluated in a reviewed source |
+| `cartel_periods.csv` | Participant-specific, legally supported infringement intervals |
+| `contracts.csv` | Verified municipality–supplier contract intervals |
+| `association_exposure.csv` | Reviewed waste-association exposure intervals |
+| `association_memberships.csv` | Source-supported municipal membership intervals |
+
 Statistics Austria's 2026 SHAPE-ZIP supplies the official municipality
 universe. The source builder reads only its identifier and name attributes and
 collapses the WFS service's 23 Vienna district geometries to municipality GKZ
@@ -63,6 +81,11 @@ Reviewed records therefore preserve the exact source ID and a concise coding
 reason. The same conservative rule applies to procurement: a notice is not
 entered as a municipality contract unless it identifies both the contracting
 municipality and supplier.
+
+GKZ values are stored as five-character strings and sorted. Evidence outside
+the selected municipality universe causes a hard error, preventing silent
+mixing of territorial vintages. Firm and association joins use stable,
+researcher-created IDs rather than fuzzy company-name matching.
 
 ## Interpretation and current limits
 
@@ -81,4 +104,3 @@ municipality–supplier awards can be verified. See
 [`docs/data_sources.md`](docs/data_sources.md) for the collection workflow and
 [`docs/methodology.md`](docs/methodology.md) for the classification rules and
 identification cautions.
-
