@@ -414,4 +414,3 @@ def build_exposure(
         audit_output=audit_output,
     )
 
-
