@@ -1,0 +1,13 @@
+association_id,association_name,exposed,exposure_start,exposure_end,source_id,source_url,notes
+awv_graz_umgebung,AWV Graz-Umgebung,1,2008,2008,edikt_fcc_27kt1_24k,,"Project table: reciprocal subpartner arrangement and quantities."
+awv_graz_umgebung,AWV Graz-Umgebung,1,2016,2017,edikt_fcc_27kt1_24k,,"Project table: prices and cover bids coordinated to preserve the status quo."
+awv_hartberg,AWV Hartberg,1,2019,2019,edikt_fcc_27kt1_24k,,"Project table: competitors asked to stand back or submit cover bids."
+awv_leibnitz,AWV Leibnitz,1,2013,2013,edikt_fcc_27kt1_24k,,"Project table: unlawful information exchange aimed at quantity swaps."
+awv_pongau,AWV Pongau,1,2009,2009,edikt_fcc_27kt1_24k,,"Project table: FCC stood back in favor of competitors."
+awv_weiz,AWV Weiz,1,2015,2016,edikt_fcc_27kt1_24k,,"Project table: routes divided to preserve the status quo; turnover and prices exchanged."
+awv_westkaernten,AWV Westkärnten,1,2011,2012,edikt_fcc_27kt1_24k,,"Project table: geographic/customer allocation."
+gabl_bruck_leitha,GVA Bruck an der Leitha,1,2015,2015,edikt_fcc_27kt1_24k,,"Project table: price level shared so competitors would bid above it."
+gabl_bruck_leitha,GVA Bruck an der Leitha,1,2018,2018,edikt_fcc_27kt1_24k,,"Decision section 13: geographic allocation concerning the association."
+gva_moedling,GVA Mödling,1,2004,2004,edikt_fcc_27kt1_24k,,"Project table: economically unnecessary bidding consortium."
+gva_moedling,GVA Mödling,1,2019,2020,edikt_fcc_27kt1_24k,,"Project table: cover bid/customer allocation in 2019 and price exchange in 2020."
+

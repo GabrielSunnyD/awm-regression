@@ -6,6 +6,10 @@ dist/
 build/
 *.egg-info/
 
+data/sources/downloads/
+data/sources/download_manifest.json
 data/raw/*.csv
 data/processed/*.csv
 
+!data/sources/registry.csv
+!data/sources/curated/*.csv

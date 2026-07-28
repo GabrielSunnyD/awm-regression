@@ -1,5 +1,10 @@
 # Raw inputs
 
-Copy and populate the CSV schemas from `data/input_templates` here. Only this
-README is committed; source data and generated outputs are ignored by Git.
+Run `uv run awm-sources all` to create the six CSV inputs from the official
+downloads and curated source records under `data/sources`. Generated CSV files
+are ignored by Git.
+
+Do not hand-edit generated files. Amend the source registry or curated records
+instead, then rebuild so every value remains reproducible.
+
 

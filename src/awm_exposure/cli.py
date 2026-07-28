@@ -60,3 +60,4 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote audit output to {summary.audit_output}.")
     return 0
 
+

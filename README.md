@@ -1,95 +1,84 @@
-# Austrian Waste Management Cartel exposure
+# Austrian waste-cartel municipality exposure
 
-This repository builds a municipality-level **ever-exposed** indicator for the
-Austrian waste-management cartel.
-
-The official abbreviation is **GKZ** (*Gemeindekennziffer*), not GZK. The main
-output has one row per municipality:
+This project builds a simple, auditable municipality-level exposure indicator
+for every Austrian municipality:
 
 ```text
 gkz,exposure,data_found
-10101,1,true
-10102,0,false
 ```
 
-`exposure = 1` when at least one of the following rules is satisfied:
+`exposure=1` when at least one reviewed source supports direct municipal
+exposure, a municipality contract overlaps a participant's court-supported
+infringement period, or association membership overlaps a reviewed association
+exposure. Positive evidence wins when rules conflict.
 
-1. a coded source explicitly identifies the municipality as exposed;
-2. the municipality had a contract with a cartel participant and the contract
-   dates overlap that participant's legally supported cartel period; or
-3. the municipality belonged to a waste-management association during a period
-   for which that association is coded as exposed.
+## Reproduce the data
 
-Otherwise `exposure = 0`. Positive evidence always wins if sources conflict.
-
-`data_found = true` means at least one exposure-relevant observation was
-available for the municipality: a direct coding row, a contract row, or
-membership in an association whose exposure status was evaluated. It does **not**
-mean that exposure was found. A municipality with no such evidence is assigned
-`exposure = 0, data_found = false`, making default-zero cases distinguishable
-from evidence-supported zeroes.
-
-This produces a cross-section, despite the word "panel" sometimes being used
-informally for the output. It does not create a municipality-year treatment
-variable.
-
-## Quick start
-
-Python 3.10 or newer is sufficient; the pipeline has no third-party runtime
-dependencies.
+Install [`uv`](https://docs.astral.sh/uv/), clone the repository, and run:
 
 ```bash
-python scripts/build_exposure.py \
-  --input-dir data/raw \
-  --output-dir data/processed
+uv sync --locked
+uv run awm-sources all
+uv run awm-exposure
 ```
 
-The command writes:
+The first command creates the locked project environment. `awm-sources` then
+downloads official evidence to `data/sources/downloads`, records SHA-256
+checksums, and builds the six normalized files in `data/raw`. `awm-exposure`
+writes:
 
-- `data/processed/municipality_exposure.csv`: the requested three-column output;
-- `data/processed/municipality_exposure_audit.csv`: rule flags, evidence counts,
-  and positive source IDs used to check individual classifications.
+- `data/processed/municipality_exposure.csv` — requested simple output;
+- `data/processed/municipality_exposure_audit.csv` — rule flags, counts, and
+  positive source IDs.
 
-Use `--omit-data-found` for a two-column main output or `--no-audit` to skip the
-audit file.
+Use `uv run awm-sources all --refresh` only when you intentionally want to
+replace cached source snapshots with the latest server copies. Changed
+checksums are recorded in `data/sources/download_manifest.json`.
 
-Run the tests with:
+Run the test suite with:
 
 ```bash
-python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
-## Required and optional inputs
+## Evidence architecture
 
-Place CSV files in `data/raw`. Copy the headers from `data/input_templates`.
-All column names are lowercase.
+The project keeps three layers separate:
 
-| File | Required | Purpose |
-|---|---:|---|
-| `municipalities.csv` | yes | Complete municipality universe for a single territorial reference date |
-| `direct_evidence.csv` | no | Municipality explicitly evaluated by a court document or another coded source |
-| `cartel_periods.csv` | for contract rule | Legally supported infringement interval(s) for each participant |
-| `contracts.csv` | no | Municipality-supplier contract observations |
-| `association_exposure.csv` | for association rule | Exposure status and period of a waste-management association |
-| `association_memberships.csv` | no | Municipality membership intervals in associations |
+1. `data/sources/registry.csv` defines official URLs and stable citation IDs.
+2. `data/sources/curated/*.csv` records propositions a researcher actually
+   reviewed in those sources.
+3. Generated `data/raw/*.csv` contains GKZ-normalized inputs for the exposure
+   classifier.
 
-The exact schemas and recommended sources are documented in
-[`docs/data_sources.md`](docs/data_sources.md). Dates may be `YYYY`,
-`YYYY-MM`, or `YYYY-MM-DD`; blank interval endpoints are treated as open.
+Statistics Austria's 2026 SHAPE-ZIP supplies the official municipality
+universe. The source builder reads only its identifier and name attributes and
+collapses the WFS service's 23 Vienna district geometries to municipality GKZ
+`90001`, yielding the national municipality universe.
 
-## Reproducibility choices
+Court documents are not classified with unrestricted place-name matching.
+Legal decisions contain company addresses, project locations, anonymized firms,
+and other incidental place names that are not proof of municipal exposure.
+Reviewed records therefore preserve the exact source ID and a concise coding
+reason. The same conservative rule applies to procurement: a notice is not
+entered as a municipality contract unless it identifies both the contracting
+municipality and supplier.
 
-- GKZ values are read as strings, left-padded to five digits, validated, and
-  sorted.
-- Evidence containing a GKZ outside the municipality universe causes a hard
-  error. This prevents silent mixing of territorial vintages.
-- Firm and association joins use stable researcher-created IDs, not fuzzy name
-  matching.
-- Input evidence is never inferred from a municipality name alone.
-- The audit output reports how each positive was generated.
+## Interpretation and current limits
 
-The methodology is intentionally conservative and transparent. In particular,
-`data_found = false` municipalities should not automatically be interpreted as
-known untreated municipalities in a regression. See
-[`docs/methodology.md`](docs/methodology.md).
+`data_found` measures evidence coverage, not treatment:
+
+- `exposure=1, data_found=true`: at least one positive rule was met;
+- `exposure=0, data_found=true`: some relevant evidence was evaluated but did
+  not meet a positive rule;
+- `exposure=0, data_found=false`: no coded evidence was available, so zero is a
+  default.
+
+The last category must not be read as affirmative proof that a municipality was
+unexposed. Historical procurement data and waste-association membership remain
+fragmented, and the current `contracts.csv` is intentionally empty until
+municipality–supplier awards can be verified. See
+[`docs/data_sources.md`](docs/data_sources.md) for the collection workflow and
+[`docs/methodology.md`](docs/methodology.md) for the classification rules and
+identification cautions.
 

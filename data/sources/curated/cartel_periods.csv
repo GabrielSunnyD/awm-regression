@@ -1,0 +1,4 @@
+participant_id,participant_name,cartel_start,cartel_end,source_id,source_url,notes
+fcc_austria,FCC Austria Abfall Service AG,2002-07,2021-03,edikt_fcc_27kt1_24k,,"Court finding: direct participation from at least July 2002 through March 2021."
+huber_group,"Huber Entsorgungsgesellschaft m.b.H. Nfg. KG; Huber Abfallservice Verwaltungsgesellschaft m.b.H.",2003,2021-03,edikt_huber_28kt1_25v,,"Court finding: participation in Carinthia from at least 2003 through March 2021."
+
