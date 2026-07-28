@@ -20,6 +20,10 @@ where:
 An interval with a blank start or end is open in that direction. A year-only
 start is interpreted as January 1, while a year-only end is December 31.
 
+The classification is built from a single Statistics Austria territorial
+vintage. The source-ingestion layer resolves reviewed official municipality
+names to GKZ before this classifier runs; no fuzzy name matching occurs here.
+
 ## `data_found`
 
 `data_found` records evidence coverage, not treatment:
@@ -69,4 +73,14 @@ For causal work, preserve the rule flags and consider:
 - a direct-evidence-only robustness definition;
 - predetermined exposure based on pre-cartel relationships;
 - contract- or tender-level analysis around the first post-cartel retendering.
+
+## Present coverage
+
+The reproducible source build should not be confused with exhaustive evidence
+coverage. The initial curated release contains reviewed municipal and
+association entries from the published FCC decision, two participant-specific
+infringement periods, and only association memberships whose official source
+provides a date. It does not yet contain verified municipality–supplier
+contract rows. Consequently, `data_found=false` is common and means "not yet
+coded," not "affirmatively unexposed."
 

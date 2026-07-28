@@ -1,0 +1,273 @@
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from zipfile import ZIP_DEFLATED, ZipFile
+
+import httpx
+import shapefile
+
+from awm_exposure.sources import (
+    RAW_SCHEMAS,
+    SourceDataError,
+    build_raw_data,
+    download_sources,
+)
+
+
+def write_csv(
+    path: Path, fieldnames: list[str], rows: list[dict[str, object]]
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def write_municipality_zip(
+    path: Path, municipalities: list[tuple[str, str]]
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as temporary:
+        base = Path(temporary) / "municipalities"
+        writer = shapefile.Writer(str(base), shapeType=shapefile.NULL)
+        writer.field("ID", "C", size=5)
+        writer.field("NAME", "C", size=100)
+        for gkz, name in municipalities:
+            writer.null()
+            writer.record(gkz, name)
+        writer.close()
+        with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+            for suffix in (".shp", ".shx", ".dbf"):
+                archive.write(base.with_suffix(suffix), f"municipalities{suffix}")
+
+
+class SourcePipelineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.sources = self.root / "sources"
+        self.curated = self.sources / "curated"
+        self.raw = self.root / "raw"
+
+    def write_registry(self, filename: str = "downloads/municipalities.zip") -> None:
+        write_csv(
+            self.sources / "registry.csv",
+            ["source_id", "source_url", "filename", "description"],
+            [
+                {
+                    "source_id": "municipalities",
+                    "source_url": "https://example.test/municipalities.zip",
+                    "filename": filename,
+                    "description": "Municipality test fixture",
+                },
+                {
+                    "source_id": "court",
+                    "source_url": "https://example.test/court.html",
+                    "filename": "downloads/court.html",
+                    "description": "Court test fixture",
+                },
+                {
+                    "source_id": "members",
+                    "source_url": "https://example.test/members.html",
+                    "filename": "downloads/members.html",
+                    "description": "Membership test fixture",
+                },
+            ],
+        )
+
+    def write_curated(self, municipality_name: str = "Alpha") -> None:
+        write_csv(
+            self.curated / "direct_evidence.csv",
+            ["municipality_name", "exposed", "source_id", "source_url", "notes"],
+            [
+                {
+                    "municipality_name": municipality_name,
+                    "exposed": "1",
+                    "source_id": "court",
+                    "notes": "Reviewed court finding",
+                }
+            ],
+        )
+        write_csv(
+            self.curated / "cartel_periods.csv",
+            [
+                "participant_id",
+                "participant_name",
+                "cartel_start",
+                "cartel_end",
+                "source_id",
+                "source_url",
+                "notes",
+            ],
+            [
+                {
+                    "participant_id": "firm",
+                    "participant_name": "Firm",
+                    "cartel_start": "2003",
+                    "cartel_end": "2021-03",
+                    "source_id": "court",
+                }
+            ],
+        )
+        write_csv(
+            self.curated / "contracts.csv",
+            [
+                "municipality_name",
+                "participant_id",
+                "contract_start",
+                "contract_end",
+                "source_id",
+                "source_url",
+                "notes",
+            ],
+            [],
+        )
+        write_csv(
+            self.curated / "association_exposure.csv",
+            [
+                "association_id",
+                "association_name",
+                "exposed",
+                "exposure_start",
+                "exposure_end",
+                "source_id",
+                "source_url",
+                "notes",
+            ],
+            [
+                {
+                    "association_id": "assoc",
+                    "association_name": "Association",
+                    "exposed": "1",
+                    "exposure_start": "2019",
+                    "exposure_end": "2020",
+                    "source_id": "court",
+                }
+            ],
+        )
+        write_csv(
+            self.curated / "association_memberships.csv",
+            [
+                "municipality_name",
+                "association_id",
+                "membership_start",
+                "membership_end",
+                "source_id",
+                "source_url",
+                "notes",
+            ],
+            [
+                {
+                    "municipality_name": "Beta",
+                    "association_id": "assoc",
+                    "membership_start": "2018",
+                    "membership_end": "",
+                    "source_id": "members",
+                }
+            ],
+        )
+
+    def test_builds_every_raw_schema_and_resolves_names_to_gkz(self) -> None:
+        self.write_registry()
+        write_municipality_zip(
+            self.sources / "downloads/municipalities.zip",
+            [
+                ("10002", "Beta"),
+                ("10001", "Alpha"),
+                ("90101", "Wien-Innere Stadt"),
+                ("90201", "Wien-Leopoldstadt"),
+            ],
+        )
+        self.write_curated()
+
+        summary = build_raw_data(
+            self.sources,
+            self.raw,
+            municipality_source_id="municipalities",
+        )
+
+        self.assertEqual(summary.municipalities, 3)
+        self.assertEqual(summary.evidence_rows, 4)
+        for filename, fields in RAW_SCHEMAS.items():
+            self.assertTrue((self.raw / filename).exists())
+            with (self.raw / filename).open(encoding="utf-8") as handle:
+                self.assertEqual(next(csv.reader(handle)), fields)
+        self.assertEqual(
+            read_csv(self.raw / "municipalities.csv"),
+            [
+                {"gkz": "10001", "municipality_name": "Alpha"},
+                {"gkz": "10002", "municipality_name": "Beta"},
+                {"gkz": "90001", "municipality_name": "Wien"},
+            ],
+        )
+        self.assertEqual(
+            read_csv(self.raw / "direct_evidence.csv")[0]["gkz"], "10001"
+        )
+        membership = read_csv(self.raw / "association_memberships.csv")[0]
+        self.assertEqual(membership["gkz"], "10002")
+        self.assertEqual(
+            membership["source_url"], "https://example.test/members.html"
+        )
+        source_log = read_csv(self.raw / "source_log.csv")
+        self.assertEqual(len(source_log), 3)
+        self.assertTrue(all(row["sha256"] == "" for row in source_log))
+
+    def test_unknown_municipality_name_fails_instead_of_fuzzy_matching(self) -> None:
+        self.write_registry()
+        write_municipality_zip(
+            self.sources / "downloads/municipalities.zip",
+            [("10001", "Alpha"), ("10002", "Beta")],
+        )
+        self.write_curated(municipality_name="Alfa")
+
+        with self.assertRaisesRegex(SourceDataError, "not an exact match"):
+            build_raw_data(
+                self.sources,
+                self.raw,
+                municipality_source_id="municipalities",
+            )
+
+    def test_download_cache_refresh_and_checksum_manifest(self) -> None:
+        self.write_registry(filename="downloads/municipalities.zip")
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            return httpx.Response(200, request=request, content=b"source bytes")
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            first = download_sources(self.sources, client=client)
+            second = download_sources(self.sources, client=client)
+            third = download_sources(self.sources, refresh=True, client=client)
+
+        self.assertEqual((first.downloaded, first.cached), (3, 0))
+        self.assertEqual((second.downloaded, second.cached), (0, 3))
+        self.assertEqual((third.downloaded, third.cached), (3, 0))
+        self.assertEqual(len(calls), 6)
+        manifest = json.loads(
+            (self.sources / "download_manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(manifest["sources"]), 3)
+        self.assertTrue(
+            all(len(source["sha256"]) == 64 for source in manifest["sources"])
+        )
+
+    def test_registry_rejects_path_traversal(self) -> None:
+        self.write_registry(filename="../outside.zip")
+        with self.assertRaisesRegex(SourceDataError, "escapes"):
+            download_sources(self.sources)
+
+
+if __name__ == "__main__":
+    unittest.main()
