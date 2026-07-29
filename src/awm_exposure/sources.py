@@ -53,11 +53,20 @@ class RawBuildSummary:
     raw_dir: Path
 
 
+@dataclass(frozen=True)
+class ValidationSummary:
+    registered_sources: int
+    verified_downloads: int
+    curated_rows: int
+
+
 RAW_SCHEMAS: dict[str, list[str]] = {
     "municipalities.csv": ["gkz", "municipality_name"],
     "direct_evidence.csv": [
         "gkz",
         "exposed",
+        "exposure_start",
+        "exposure_end",
         "source_id",
         "source_url",
         "notes",
@@ -102,7 +111,13 @@ RAW_SCHEMAS: dict[str, list[str]] = {
 }
 
 _CURATED_SCHEMAS: dict[str, set[str]] = {
-    "direct_evidence.csv": {"municipality_name", "exposed", "source_id"},
+    "direct_evidence.csv": {
+        "municipality_name",
+        "exposed",
+        "exposure_start",
+        "exposure_end",
+        "source_id",
+    },
     "cartel_periods.csv": {
         "participant_id",
         "cartel_start",
@@ -181,6 +196,63 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_download_content(path: Path, content: bytes) -> None:
+    """Reject common server-error payloads before they enter the source cache."""
+
+    suffix = path.suffix.lower()
+    if suffix == ".zip" and not content.startswith(b"PK"):
+        raise SourceDataError(
+            f"Downloaded content for {path.name} is not a ZIP archive"
+        )
+    if suffix == ".pdf" and not content.startswith(b"%PDF-"):
+        raise SourceDataError(f"Downloaded content for {path.name} is not a PDF")
+    if suffix in {".html", ".htm"}:
+        prefix = content[:8192].lower()
+        if b"<html" not in prefix and b"<!doctype html" not in prefix:
+            raise SourceDataError(
+                f"Downloaded content for {path.name} is not recognizable HTML"
+            )
+
+
+def _validate_cached_snapshot(
+    path: Path,
+    source_id: str,
+    manifest_entry: Mapping[str, object] | None,
+) -> None:
+    with path.open("rb") as handle:
+        content_prefix = handle.read(8192)
+    _validate_download_content(path, content_prefix)
+    if not manifest_entry:
+        return
+
+    expected_bytes = manifest_entry.get("bytes")
+    if expected_bytes not in (None, ""):
+        try:
+            expected_size = int(expected_bytes)
+        except (TypeError, ValueError) as exc:
+            raise SourceDataError(
+                f"Download manifest has an invalid byte size for {source_id}"
+            ) from exc
+        if path.stat().st_size != expected_size:
+            raise SourceDataError(
+                f"Cached snapshot size changed for {source_id}; "
+                "run with --refresh to replace it intentionally"
+            )
+    expected_sha = str(manifest_entry.get("sha256") or "")
+    if expected_sha and (
+        len(expected_sha) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha)
+    ):
+        raise SourceDataError(
+            f"Download manifest has an invalid SHA-256 for {source_id}"
+        )
+    if expected_sha and _sha256(path) != expected_sha:
+        raise SourceDataError(
+            f"Cached snapshot checksum changed for {source_id}; "
+            "run with --refresh to replace it intentionally"
+        )
+
+
 def _write_bytes_atomic(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -206,7 +278,12 @@ def _write_csv_atomic(
     path: Path, fieldnames: Sequence[str], rows: Iterable[Mapping[str, object]]
 ) -> None:
     output = io.StringIO(newline="")
-    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer = csv.DictWriter(
+        output,
+        fieldnames=fieldnames,
+        extrasaction="ignore",
+        lineterminator="\n",
+    )
     writer.writeheader()
     writer.writerows(rows)
     _write_text_atomic(path, output.getvalue())
@@ -258,6 +335,10 @@ def download_sources(
             prior = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             raise SourceDataError(f"Cannot read {manifest_path}: {exc}") from exc
+        if not isinstance(prior, dict) or not isinstance(
+            prior.get("sources", []), list
+        ):
+            raise SourceDataError(f"{manifest_path} has an invalid manifest structure")
     prior_entries = {
         item.get("source_id"): item
         for item in prior.get("sources", [])
@@ -269,9 +350,10 @@ def download_sources(
         client = httpx.Client(
             follow_redirects=True,
             timeout=httpx.Timeout(90.0),
+            transport=httpx.HTTPTransport(retries=3),
             headers={
                 "User-Agent": (
-                    "awm-regression/0.2 "
+                    "awm-regression/0.3 "
                     "(academic reproducibility; source contact in repository)"
                 )
             },
@@ -285,9 +367,18 @@ def download_sources(
             target = _safe_target(sources_dir, source["filename"])
             fetched_at: str
             if target.exists() and not refresh:
+                previous = prior_entries.get(source["source_id"])
+                _validate_cached_snapshot(
+                    target,
+                    source["source_id"],
+                    previous if isinstance(previous, dict) else None,
+                )
                 cached += 1
-                previous = prior_entries.get(source["source_id"], {})
-                fetched_at = str(previous.get("fetched_at") or "")
+                fetched_at = str(
+                    (previous.get("fetched_at") or "")
+                    if isinstance(previous, dict)
+                    else ""
+                )
             else:
                 try:
                     response = client.get(source["source_url"])
@@ -301,6 +392,7 @@ def download_sources(
                     raise SourceDataError(
                         f"Downloaded source is empty: {source['source_id']}"
                     )
+                _validate_download_content(target, response.content)
                 _write_bytes_atomic(target, response.content)
                 downloaded += 1
                 fetched_at = datetime.now(UTC).isoformat()
@@ -330,6 +422,60 @@ def download_sources(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     )
     return DownloadSummary(downloaded, cached, manifest_path)
+
+
+def validate_sources(sources_dir: Path | str) -> ValidationSummary:
+    """Verify registry/manifest agreement, cached bytes, and curated citations."""
+
+    sources_dir = Path(sources_dir)
+    registry_rows = _load_registry(sources_dir)
+    registry = {row["source_id"]: row for row in registry_rows}
+    manifest = _manifest_entries(sources_dir)
+    if not manifest:
+        raise SourceDataError(
+            f"No download manifest found in {sources_dir}; "
+            "run `uv run awm-sources download`"
+        )
+
+    verified = 0
+    for row in registry_rows:
+        source_id = row["source_id"]
+        target = _safe_target(sources_dir, row["filename"])
+        if not target.exists():
+            raise SourceDataError(
+                f"Registered source snapshot is missing for {source_id}: {target}"
+            )
+        entry = manifest.get(source_id)
+        if entry is None:
+            raise SourceDataError(
+                f"Download manifest has no entry for registered source {source_id}"
+            )
+        if entry.get("source_url") != row["source_url"]:
+            raise SourceDataError(
+                f"Manifest URL does not match registry for {source_id}; "
+                "run `uv run awm-sources download --refresh`"
+            )
+        if entry.get("filename") != row["filename"]:
+            raise SourceDataError(
+                f"Manifest filename does not match registry for {source_id}; "
+                "run `uv run awm-sources download --refresh`"
+            )
+        _validate_cached_snapshot(target, source_id, entry)
+        verified += 1
+
+    curated_rows = 0
+    for filename, required in _CURATED_SCHEMAS.items():
+        path = sources_dir / "curated" / filename
+        rows = _read_csv(path, required)
+        for row in rows:
+            _validate_source(row, path, registry)
+        curated_rows += len(rows)
+
+    return ValidationSummary(
+        registered_sources=len(registry_rows),
+        verified_downloads=verified,
+        curated_rows=curated_rows,
+    )
 
 
 def _municipalities_from_zip(path: Path) -> list[dict[str, str]]:
@@ -475,6 +621,10 @@ def _manifest_entries(sources_dir: Path) -> dict[str, dict[str, object]]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         raise SourceDataError(f"Cannot read {path}: {exc}") from exc
+    if not isinstance(payload, dict) or not isinstance(
+        payload.get("sources", []), list
+    ):
+        raise SourceDataError(f"{path} has an invalid manifest structure")
     return {
         str(item["source_id"]): item
         for item in payload.get("sources", [])
@@ -486,7 +636,7 @@ def build_raw_data(
     sources_dir: Path | str,
     raw_dir: Path | str,
     *,
-    municipality_source_id: str = "statistik_austria_municipalities_2026",
+    municipality_source_id: str = "statistik_austria_municipalities_2024",
 ) -> RawBuildSummary:
     """Build all six raw CSVs from downloaded and reviewed source records."""
 

@@ -1,6 +1,18 @@
-"""Municipality-level exposure coding for the Austrian waste cartel."""
+"""Municipality-year exposure coding for the Austrian waste cartel."""
 
-from .pipeline import BuildSummary, InputError, build_exposure
+from .pipeline import (
+    DEFAULT_END_YEAR,
+    DEFAULT_START_YEAR,
+    BuildSummary,
+    InputError,
+    build_exposure,
+)
 
-__all__ = ["BuildSummary", "InputError", "build_exposure"]
+__all__ = [
+    "DEFAULT_END_YEAR",
+    "DEFAULT_START_YEAR",
+    "BuildSummary",
+    "InputError",
+    "build_exposure",
+]
 

@@ -1,30 +1,67 @@
 # Inputs and source collection
 
-The repository separates downloading, research coding, normalization, and
-classification. This is intentional: only the municipality universe is a
+The repository separates downloading, validation, research coding,
+normalization, and classification. Only the municipality universe is a
 complete machine-readable dataset. Court decisions, procurement records, and
 historical association membership require source-specific review.
 
 ## Reproducible workflow
 
+Run the whole pipeline with:
+
 ```bash
 uv sync --locked
-uv run awm-sources all
+uv run awm-build
+```
+
+The command:
+
+1. downloads missing sources listed in `data/sources/registry.csv`;
+2. reuses unchanged cached snapshots by default;
+3. verifies source type, byte size, and SHA-256 checksum;
+4. resolves reviewed municipality evidence to the 2024 GKZ universe;
+5. writes six normalized classifier inputs and a source log to `data/raw`;
+6. writes the 2001–2024 municipality-year panel and audit to
+   `data/processed`.
+
+For staged operation:
+
+```bash
+uv run awm-sources download
+uv run awm-sources validate
+uv run awm-sources build
 uv run awm-exposure
 ```
 
-`awm-sources all` performs two operations:
+Use `uv run awm-build --offline` when the verified snapshots already exist and
+network access is undesirable. Use `--refresh` only when intentionally
+replacing cached server copies.
 
-1. It downloads every URL in `data/sources/registry.csv` to
-   `data/sources/downloads/`.
-2. It combines the official municipality universe with reviewed records in
-   `data/sources/curated/` and writes the required CSVs to `data/raw/`.
+## Ingestion safeguards
 
-Each download is recorded in `data/sources/download_manifest.json` with its
-URL, access time, byte count, and SHA-256 checksum. The generated
-`data/raw/source_log.csv` carries that provenance into the analysis layer.
-Cached snapshots are reused by default. Pass `--refresh` to replace them
-explicitly.
+Every downloaded source receives a stable `source_id`. The generated
+`data/sources/download_manifest.json` records:
+
+- official URL and local filename;
+- UTC access time;
+- byte size; and
+- SHA-256 checksum.
+
+Ordinary runs do not overwrite snapshots. Before reuse, the downloader checks
+the current byte size and checksum against the manifest and fails if the cache
+changed. Refreshes use HTTP retries and replace a file atomically only after a
+non-empty response with the expected ZIP, PDF, or HTML signature is received.
+
+The `validate` stage checks that:
+
+- every registry row has an HTTPS URL and path confined to `data/sources`;
+- every registered download exists;
+- registry URLs and filenames match the manifest;
+- cached byte sizes and checksums still match; and
+- every curated `source_id` is present in the registry.
+
+Generated CSVs are also written atomically. A failed download, validation, or
+normalization therefore does not leave a partially written analysis table.
 
 ## Directory roles
 
@@ -32,13 +69,15 @@ explicitly.
 |---|---|:---:|
 | `data/sources/registry.csv` | Official URL registry and stable source IDs | yes |
 | `data/sources/curated/*.csv` | Reviewed propositions extracted from sources | yes |
-| `data/sources/downloads/` | Exact downloaded documents and datasets | no |
-| `data/sources/download_manifest.json` | Snapshot checksums and access times | no |
-| `data/raw/*.csv` | Generated, GKZ-normalized classifier inputs | no |
+| `data/sources/downloads/` | Exact downloaded snapshots | no |
+| `data/sources/download_manifest.json` | Snapshot provenance and checksums | no |
+| `data/raw/*.csv` | Generated, GKZ-normalized inputs and source log | no |
+| `data/processed/*.csv` | Generated panel and detailed audit | no |
 
-Do not hand-edit `data/raw`. Amend the registry or curated records and rebuild.
+Do not hand-edit `data/raw` or `data/processed`. Amend the registry or curated
+records and rebuild.
 
-## 1. Municipality universe
+## 1. Harmonized municipality universe
 
 Generated file: `municipalities.csv`
 
@@ -47,26 +86,31 @@ Generated file: `municipalities.csv`
 | `gkz` | Five-digit Statistics Austria municipality identifier |
 | `municipality_name` | Official municipality name |
 
-Source: Statistics Austria's WFS SHAPE-ZIP for municipalities at
-2026-01-01:
+The default source is Statistics Austria's municipality WFS snapshot at
+2024-01-01:
 
 <https://data.statistik.gv.at/web/meta.jsp?dataset=OGDEXT_GEM_1>
 
-The parser reads only the official identifier/name attributes (`G_ID` and
-`G_NAME`; older fixtures may use `ID` and `NAME`). The WFS geometry represents
-Vienna using 23 municipal districts. The code collapses those district polygons
-to the single municipality `Wien`, GKZ `90001`, so the CSV matches the national
-municipality concept.
+The parser reads only the official identifier and name attributes (`ID` and
+`NAME`, with support for `G_ID` and `G_NAME`) and ignores geometry. The WFS
+represents Vienna with 23 district geometries; the code collapses them to
+municipality `Wien`, GKZ `90001`. The resulting universe has 2,093 GKZ values.
 
-To use a different territorial vintage, add its official WFS URL to
-`registry.csv` and run:
+The exposure output crosses this one universe with all years 2001–2024. It is a
+fixed-geography panel, not a reconstruction of contemporaneous municipal
+boundaries. Statistics Austria's WFS metadata is historized from 2011 onward,
+so a full annual-boundary design beginning in 2001 would additionally require a
+pre-2011 universe and explicit merger/split crosswalks.
+
+To select another registered reference vintage:
 
 ```bash
-uv run awm-sources all \
+uv run awm-build \
   --municipality-source-id statistik_austria_municipalities_YEAR
 ```
 
-Do not combine vintages without a documented historical crosswalk.
+Do not mix a different universe into an analysis without documenting the
+territorial estimand and crosswalking historical evidence.
 
 ## 2. Direct municipality evidence
 
@@ -74,25 +118,31 @@ Generated file: `direct_evidence.csv`
 
 | Column | Description |
 |---|---|
-| `gkz` | Municipality GKZ resolved from the selected universe |
+| `gkz` | Municipality resolved against the selected universe |
 | `exposed` | Reviewed `1`/`0` finding |
-| `source_id` | Stable registry citation |
-| `source_url` | Official document URL |
-| `notes` | Decision section, year, and coding proposition |
+| `exposure_start`, `exposure_end` | Inclusive supported interval |
+| `source_id`, `source_url` | Stable citation and official URL |
+| `notes` | Decision location and narrow coding proposition |
 
-The current records are reviewed municipality/customer entries in the
-published FCC Cartel Court decision, 27 Kt 1/24k. The document is downloaded
-from the Austrian Justice Ministry's Cartel Act §37 publication database:
+The current records are reviewed municipality/customer entries in Cartel Court
+decision 27 Kt 1/24k, downloaded from the Austrian Justice Ministry's Cartel Act
+§37 publication database:
 
 <https://edikte.justiz.gv.at/edikte/ek/ekedi17.nsf/suche!OpenForm>
 
-Curated inputs use official municipality names. The builder requires an exact
-name match and converts it to GKZ. When an official name occurs under more than
-one GKZ, the curated row must include `gkz`; the code never guesses.
+The curated table records the specific project year or years stated in the
+decision. Non-contiguous years use separate rows. This is what prevents a
+single documented incident from becoming an ever-exposed municipality.
 
-Broad place-name extraction is deliberately excluded. A court decision can
-mention a municipality as an address, project location, or comparison without
-identifying it as an affected contracting customer.
+Curated inputs use exact official municipality names. The builder converts the
+name to GKZ and never uses fuzzy matching. If an official name is ambiguous,
+the row must supply the intended current `gkz`. If a historical municipality no
+longer exists in the 2024 universe, its mapping must be researched and
+documented before the row is added.
+
+Broad place-name extraction remains deliberately excluded. A decision may
+mention a company address, project location, or comparison municipality without
+identifying an affected contracting customer.
 
 ## 3. Participant infringement periods
 
@@ -110,10 +160,10 @@ The current records cover:
 - FCC Austria Abfall Service AG, July 2002–March 2021, from 27 Kt 1/24k;
 - the two Huber entities, 2003–March 2021, from 28 Kt 1/25v.
 
-The BWB's June 2026 FAQ is downloaded as a discovery/status source, but a
-company is not assigned the FAQ's industry-wide period automatically. Add a
-participant only when its own court decision supports a period. If the
-supported period is discontinuous, add multiple rows under one
+The BWB's June 2026 FAQ is retained as a discovery/status source, but its
+industry-wide dates are not automatically assigned to every named firm. Add a
+participant only when an authoritative source supports that participant's own
+period. Represent a discontinuous period with multiple rows under the same
 `participant_id`.
 
 ## 4. Municipality contracts
@@ -127,22 +177,22 @@ Generated file: `contracts.csv`
 | `contract_start`, `contract_end` | Supported performance interval |
 | `source_id`, `source_url`, `notes` | Award/contract citation |
 
-The current file is header-only. This is a deliberate evidence decision, not a
-pipeline failure. The initial reviewed court decisions prove collusive conduct
-for named customers but often do not establish which participant ultimately
-held a municipality contract for the full performance interval.
+The current file is header-only. This is an evidence decision, not an ingestion
+failure. The initial court decisions document collusive projects but often do
+not establish which participant held a municipality contract throughout a
+defensible performance interval.
 
-Future contract collection can use:
+Potential collection sources include:
 
 - Austria's procurement search: <https://ausschreibungen.usp.gv.at/>
 - TED Search API: <https://docs.ted.europa.eu/api/latest/search.html>
-- municipal or association award notices, council minutes, contracts, budgets,
-  and annual reports.
+- municipal and association award notices;
+- council minutes, contracts, budgets, and annual reports.
 
-Enter a record only when the source identifies the municipality, supplier, and
-a defensible date interval. A call for tenders alone is not an award. Preserve
-firm aliases in the research notes and map them deliberately to an existing
-`participant_id`; the classifier does not fuzzy-match companies.
+Enter a row only when the source identifies the municipality, supplier, and a
+defensible interval. A call for tenders alone is not an award. Map firm aliases
+deliberately to a stable `participant_id`; the classifier never fuzzy-matches
+company names.
 
 ## 5. Association exposure
 
@@ -152,16 +202,16 @@ Generated file: `association_exposure.csv`
 |---|---|
 | `association_id`, `association_name` | Stable association identity |
 | `exposed` | Reviewed status |
-| `exposure_start`, `exposure_end` | Supported interval |
+| `exposure_start`, `exposure_end` | Inclusive supported interval |
 | `source_id`, `source_url`, `notes` | Citation and coding basis |
 
-The current rows code waste associations named as affected projects in
-27 Kt 1/24k, using the specific years shown by the decision. Repeated
-non-contiguous conduct is stored as separate rows.
+Current rows code waste associations named as affected projects in
+27 Kt 1/24k, using the years shown in the decision. Repeated non-contiguous
+conduct is stored as separate rows.
 
-An association record is not duplicated as direct evidence for every member.
-Municipality propagation happens only through the membership table and interval
-overlap.
+An association finding is not copied directly to every current member.
+Propagation occurs only after a dated membership row and exposure row overlap
+within a panel year.
 
 ## 6. Association membership
 
@@ -174,28 +224,31 @@ Generated file: `association_memberships.csv`
 | `membership_start`, `membership_end` | Source-supported interval |
 | `source_id`, `source_url`, `notes` | Membership citation |
 
-The initial records use the official GVA Mödling history page where it provides
-specific entry dates:
+The initial records use the official GVA Mödling history where it gives specific
+entry dates:
 
 <https://gvamoedling.at/ueber-uns/verband-und-gemeinden/>
 
 The registry also snapshots GABL's current member page for future research.
-Those current members are not yet coded historically because the page does not
-show that every current municipality belonged during the 2015 or 2018 exposed
-intervals. Current membership must not be projected backward without evidence.
+Those municipalities are not coded historically because the current page does
+not establish membership during the association's 2015 or 2018 exposure
+events. Current membership must not be projected backward.
 
-## Adding a source-backed row
+## Adding source-backed evidence
 
-1. Add an HTTPS URL, filename, description, and unique `source_id` to
-   `data/sources/registry.csv`.
+1. Add an HTTPS URL, confined local filename, description, and unique
+   `source_id` to `data/sources/registry.csv`.
 2. Run `uv run awm-sources download`.
-3. Read the downloaded snapshot and add a narrow proposition to the relevant
-   `data/sources/curated/*.csv`.
-4. Include the page, table row, paragraph, and any uncertainty in `notes`.
-5. Run `uv run awm-sources build` and inspect the generated row and source log.
-6. Run the unit tests and `uv run awm-exposure`.
+3. Read the downloaded snapshot and add only the proposition it supports to the
+   relevant `data/sources/curated/*.csv`.
+4. Record the narrow date interval, source location, and uncertainty in
+   `notes`.
+5. Run `uv run awm-sources validate`.
+6. Run `uv run awm-build --offline`.
+7. Inspect the raw row, source log, final audit rows, and coverage counts.
+8. Run the complete test suite.
 
-URLs alone are not durable research provenance. Keep the stable source ID,
-checksum, decision/publication date, access time, and exact proposition together
-when exporting the analysis for litigation or publication.
-
+URLs alone are not durable research provenance. Preserve the source ID,
+checksum, access time, legal decision/publication date, exact proposition, and
+temporal interpretation together when exporting the analysis for litigation or
+publication.

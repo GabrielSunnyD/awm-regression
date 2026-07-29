@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "awm-exposure"
-version = "0.2.0"
-description = "Build a municipality-level Austrian waste-cartel exposure indicator"
+version = "0.3.0"
+description = "Build an Austrian municipality-year waste-cartel exposure panel"
 requires-python = ">=3.12"
 dependencies = [
     "httpx[socks]>=0.28.1,<1",
@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 awm-exposure = "awm_exposure.cli:main"
 awm-sources = "awm_exposure.source_cli:main"
+awm-build = "awm_exposure.project_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

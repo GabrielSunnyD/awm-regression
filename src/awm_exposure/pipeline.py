@@ -1,7 +1,10 @@
-"""Core exposure-classification pipeline.
+"""Build a dated municipality-year exposure panel.
 
-The implementation intentionally uses only Python's standard library so the
-classification can run in a minimal research environment.
+The classifier deliberately keeps legal/procurement interpretation outside the
+code.  Its job is narrower: validate reviewed evidence intervals, intersect
+them with calendar years, apply three documented exposure rules, and emit a
+balanced GKZ-year panel.  A municipality is never carried forward merely
+because it was exposed once.
 """
 
 from __future__ import annotations
@@ -18,6 +21,10 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 
+DEFAULT_START_YEAR = 2001
+DEFAULT_END_YEAR = 2024
+
+
 class InputError(ValueError):
     """Raised when an input file cannot be interpreted safely."""
 
@@ -25,14 +32,19 @@ class InputError(ValueError):
 @dataclass(frozen=True)
 class BuildSummary:
     municipalities: int
-    exposed: int
-    with_data: int
+    years: int
+    rows: int
+    exposed_rows: int
+    ever_exposed_municipalities: int
+    with_data_rows: int
     main_output: Path
     audit_output: Path | None
 
 
 @dataclass(frozen=True)
 class Interval:
+    """Inclusive date interval; ``None`` denotes an open boundary."""
+
     start: date | None
     end: date | None
 
@@ -40,6 +52,7 @@ class Interval:
 _YEAR = re.compile(r"^\d{4}$")
 _YEAR_MONTH = re.compile(r"^(\d{4})-(\d{2})$")
 _GKZ = re.compile(r"^\d{5}$")
+RowKey = tuple[str, int]
 
 
 def _read_csv(
@@ -132,20 +145,59 @@ def _parse_interval(
         start=_parse_boundary(row.get(start_column, ""), is_end=False, context=context),
         end=_parse_boundary(row.get(end_column, ""), is_end=True, context=context),
     )
-    if interval.start is not None and interval.end is not None:
-        if interval.start > interval.end:
-            raise InputError(
-                f"{context}: {start_column} is after {end_column}"
-            )
+    if interval.start is None and interval.end is None:
+        raise InputError(
+            f"{context}: at least one of {start_column} or {end_column} is required"
+        )
+    if (
+        interval.start is not None
+        and interval.end is not None
+        and interval.start > interval.end
+    ):
+        raise InputError(f"{context}: {start_column} is after {end_column}")
     return interval
 
 
-def _overlaps(left: Interval, right: Interval) -> bool:
-    if left.end is not None and right.start is not None and left.end < right.start:
-        return False
-    if right.end is not None and left.start is not None and right.end < left.start:
-        return False
-    return True
+def _year_interval(year: int) -> Interval:
+    return Interval(date(year, 1, 1), date(year, 12, 31))
+
+
+def _overlaps_all(*intervals: Interval) -> bool:
+    """Return whether inclusive intervals share at least one common date."""
+
+    starts = [interval.start for interval in intervals if interval.start is not None]
+    ends = [interval.end for interval in intervals if interval.end is not None]
+    latest_start = max(starts) if starts else None
+    earliest_end = min(ends) if ends else None
+    return (
+        latest_start is None
+        or earliest_end is None
+        or latest_start <= earliest_end
+    )
+
+
+def _overlapping_years(
+    intervals: Sequence[Interval], start_year: int, end_year: int
+) -> range:
+    """Return panel years in the common intersection of ``intervals``."""
+
+    starts = [
+        interval.start.year
+        for interval in intervals
+        if interval.start is not None
+    ]
+    ends = [
+        interval.end.year
+        for interval in intervals
+        if interval.end is not None
+    ]
+    first = max([start_year, *starts])
+    last = min([end_year, *ends])
+    if first > last:
+        return range(0)
+    # Year bounds alone can overstate an intersection when two intervals meet
+    # in the same year but on disjoint dates.  Filter that edge case below.
+    return range(first, last + 1)
 
 
 def _require_identifier(
@@ -161,7 +213,7 @@ def _check_known_gkz(gkz: str, universe: set[str], context: str) -> None:
     if gkz not in universe:
         raise InputError(
             f"{context}: GKZ {gkz} is not in municipalities.csv; "
-            "check the territorial reference date"
+            "check the harmonized territorial reference year"
         )
 
 
@@ -186,7 +238,12 @@ def _write_csv_atomic(
     )
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=fieldnames,
+                extrasaction="ignore",
+                lineterminator="\n",
+            )
             writer.writeheader()
             writer.writerows(rows)
         os.replace(temporary_name, path)
@@ -198,15 +255,30 @@ def _write_csv_atomic(
         raise
 
 
+def _validate_year_range(start_year: int, end_year: int) -> None:
+    if not (1 <= start_year <= 9999 and 1 <= end_year <= 9999):
+        raise InputError("Panel years must be between 1 and 9999")
+    if start_year > end_year:
+        raise InputError("start_year cannot be after end_year")
+
+
 def build_exposure(
     input_dir: Path | str,
     output_dir: Path | str,
     *,
+    start_year: int = DEFAULT_START_YEAR,
+    end_year: int = DEFAULT_END_YEAR,
     include_data_found: bool = True,
     write_audit: bool = True,
 ) -> BuildSummary:
-    """Build the requested main output and an optional rule-level audit file."""
+    """Build the balanced GKZ-year output and optional rule-level audit file.
 
+    Every municipality in ``municipalities.csv`` receives one row for every
+    inclusive panel year.  A rule applies to a year if its dated source
+    intervals share at least one day with that calendar year.
+    """
+
+    _validate_year_range(start_year, end_year)
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
 
@@ -233,7 +305,9 @@ def build_exposure(
     universe = set(names)
 
     direct_rows = _read_csv(
-        direct_path, {"gkz", "exposed"}, optional_file=True
+        direct_path,
+        {"gkz", "exposed", "exposure_start", "exposure_end"},
+        optional_file=True,
     )
     period_rows = _read_csv(
         periods_path,
@@ -256,33 +330,41 @@ def build_exposure(
         optional_file=True,
     )
 
-    data_found: set[str] = set()
-    direct_positive: set[str] = set()
-    contract_positive: set[str] = set()
-    association_positive: set[str] = set()
-    positive_sources: defaultdict[str, list[str]] = defaultdict(list)
-    direct_count: defaultdict[str, int] = defaultdict(int)
-    contract_count: defaultdict[str, int] = defaultdict(int)
-    association_count: defaultdict[str, int] = defaultdict(int)
+    data_found: set[RowKey] = set()
+    direct_positive: set[RowKey] = set()
+    contract_positive: set[RowKey] = set()
+    association_positive: set[RowKey] = set()
+    positive_sources: defaultdict[RowKey, list[str]] = defaultdict(list)
+    direct_count: defaultdict[RowKey, int] = defaultdict(int)
+    contract_count: defaultdict[RowKey, int] = defaultdict(int)
+    association_count: defaultdict[RowKey, int] = defaultdict(int)
 
     for row in direct_rows:
         context = _context(direct_path, row)
         gkz = _normalize_gkz(row["gkz"], context)
         _check_known_gkz(gkz, universe, context)
-        data_found.add(gkz)
-        direct_count[gkz] += 1
-        if _parse_bool(row["exposed"], context):
-            direct_positive.add(gkz)
-            positive_sources[gkz].extend(_source_ids(row))
+        interval = _parse_interval(
+            row, "exposure_start", "exposure_end", context
+        )
+        exposed = _parse_bool(row["exposed"], context)
+        for year in _overlapping_years([interval], start_year, end_year):
+            year_span = _year_interval(year)
+            if not _overlaps_all(interval, year_span):
+                continue
+            key = (gkz, year)
+            data_found.add(key)
+            direct_count[key] += 1
+            if exposed:
+                direct_positive.add(key)
+                positive_sources[key].extend(_source_ids(row))
 
-    periods_by_participant: defaultdict[str, list[tuple[Interval, Mapping[str, str]]]]
-    periods_by_participant = defaultdict(list)
+    periods_by_participant: defaultdict[
+        str, list[tuple[Interval, Mapping[str, str]]]
+    ] = defaultdict(list)
     for row in period_rows:
         context = _context(periods_path, row)
         participant_id = _require_identifier(row, "participant_id", context)
-        interval = _parse_interval(
-            row, "cartel_start", "cartel_end", context
-        )
+        interval = _parse_interval(row, "cartel_start", "cartel_end", context)
         periods_by_participant[participant_id].append((interval, row))
 
     for row in contract_rows:
@@ -293,20 +375,24 @@ def build_exposure(
         contract_interval = _parse_interval(
             row, "contract_start", "contract_end", context
         )
-        data_found.add(gkz)
-        contract_count[gkz] += 1
+        for year in _overlapping_years([contract_interval], start_year, end_year):
+            year_span = _year_interval(year)
+            if not _overlaps_all(contract_interval, year_span):
+                continue
+            key = (gkz, year)
+            data_found.add(key)
+            contract_count[key] += 1
 
-        for cartel_interval, period_row in periods_by_participant.get(
-            participant_id, []
-        ):
-            if _overlaps(contract_interval, cartel_interval):
-                contract_positive.add(gkz)
-                positive_sources[gkz].extend(_source_ids(row, period_row))
+            for cartel_interval, period_row in periods_by_participant.get(
+                participant_id, []
+            ):
+                if _overlaps_all(contract_interval, cartel_interval, year_span):
+                    contract_positive.add(key)
+                    positive_sources[key].extend(_source_ids(row, period_row))
 
     exposures_by_association: defaultdict[
         str, list[tuple[bool, Interval, Mapping[str, str]]]
-    ]
-    exposures_by_association = defaultdict(list)
+    ] = defaultdict(list)
     for row in association_rows:
         context = _context(association_exposure_path, row)
         association_id = _require_identifier(row, "association_id", context)
@@ -324,73 +410,87 @@ def build_exposure(
         membership_interval = _parse_interval(
             row, "membership_start", "membership_end", context
         )
-        evaluated_rows = exposures_by_association.get(association_id, [])
-        if not evaluated_rows:
-            continue
-
-        data_found.add(gkz)
-        association_count[gkz] += 1
-        for exposed, exposure_interval, exposure_row in evaluated_rows:
-            if exposed and _overlaps(membership_interval, exposure_interval):
-                association_positive.add(gkz)
-                positive_sources[gkz].extend(_source_ids(row, exposure_row))
+        for exposed, exposure_interval, exposure_row in exposures_by_association.get(
+            association_id, []
+        ):
+            intervals = [membership_interval, exposure_interval]
+            for year in _overlapping_years(intervals, start_year, end_year):
+                year_span = _year_interval(year)
+                if not _overlaps_all(*intervals, year_span):
+                    continue
+                key = (gkz, year)
+                data_found.add(key)
+                association_count[key] += 1
+                if exposed:
+                    association_positive.add(key)
+                    positive_sources[key].extend(_source_ids(row, exposure_row))
 
     main_rows: list[dict[str, object]] = []
     audit_rows: list[dict[str, object]] = []
+    ever_exposed: set[str] = set()
     for gkz in sorted(universe):
-        direct = gkz in direct_positive
-        contract = gkz in contract_positive
-        association = gkz in association_positive
-        exposed = direct or contract or association
-        found = gkz in data_found
-        if exposed and not found:  # Defensive assertion for future rule changes.
-            raise AssertionError(f"Positive exposure without data_found for {gkz}")
+        for year in range(start_year, end_year + 1):
+            key = (gkz, year)
+            direct = key in direct_positive
+            contract = key in contract_positive
+            association = key in association_positive
+            exposed = direct or contract or association
+            found = key in data_found
+            if exposed and not found:  # Defensive assertion for future rule changes.
+                raise AssertionError(
+                    f"Positive exposure without data_found for {gkz} in {year}"
+                )
+            if exposed:
+                ever_exposed.add(gkz)
 
-        main_row: dict[str, object] = {
-            "gkz": gkz,
-            "exposure": int(exposed),
-        }
-        if include_data_found:
-            main_row["data_found"] = str(found).lower()
-        main_rows.append(main_row)
-
-        reasons = []
-        if direct:
-            reasons.append("direct")
-        if contract:
-            reasons.append("contract")
-        if association:
-            reasons.append("association")
-        audit_rows.append(
-            {
+            main_row: dict[str, object] = {
                 "gkz": gkz,
-                "municipality_name": names[gkz],
+                "year": year,
                 "exposure": int(exposed),
-                "data_found": str(found).lower(),
-                "direct_exposure": int(direct),
-                "contract_exposure": int(contract),
-                "association_exposure": int(association),
-                "exposure_reasons": "|".join(reasons),
-                "positive_source_ids": _join_unique(positive_sources[gkz]),
-                "direct_rows": direct_count[gkz],
-                "contract_rows": contract_count[gkz],
-                "evaluated_association_memberships": association_count[gkz],
             }
-        )
+            if include_data_found:
+                main_row["data_found"] = str(found).lower()
+            main_rows.append(main_row)
 
-    main_output = output_dir / "municipality_exposure.csv"
-    main_fields = ["gkz", "exposure"]
+            reasons = []
+            if direct:
+                reasons.append("direct")
+            if contract:
+                reasons.append("contract")
+            if association:
+                reasons.append("association")
+            audit_rows.append(
+                {
+                    "gkz": gkz,
+                    "year": year,
+                    "municipality_name": names[gkz],
+                    "exposure": int(exposed),
+                    "data_found": str(found).lower(),
+                    "direct_exposure": int(direct),
+                    "contract_exposure": int(contract),
+                    "association_exposure": int(association),
+                    "exposure_reasons": "|".join(reasons),
+                    "positive_source_ids": _join_unique(positive_sources[key]),
+                    "direct_rows": direct_count[key],
+                    "contract_rows": contract_count[key],
+                    "evaluated_association_memberships": association_count[key],
+                }
+            )
+
+    main_output = output_dir / "municipality_year_exposure.csv"
+    main_fields = ["gkz", "year", "exposure"]
     if include_data_found:
         main_fields.append("data_found")
     _write_csv_atomic(main_output, main_fields, main_rows)
 
     audit_output: Path | None = None
     if write_audit:
-        audit_output = output_dir / "municipality_exposure_audit.csv"
+        audit_output = output_dir / "municipality_year_exposure_audit.csv"
         _write_csv_atomic(
             audit_output,
             [
                 "gkz",
+                "year",
                 "municipality_name",
                 "exposure",
                 "data_found",
@@ -407,10 +507,12 @@ def build_exposure(
         )
 
     return BuildSummary(
-        municipalities=len(main_rows),
-        exposed=sum(int(row["exposure"]) for row in main_rows),
-        with_data=sum(row.get("data_found") == "true" for row in audit_rows),
+        municipalities=len(universe),
+        years=end_year - start_year + 1,
+        rows=len(main_rows),
+        exposed_rows=sum(int(row["exposure"]) for row in main_rows),
+        ever_exposed_municipalities=len(ever_exposed),
+        with_data_rows=sum(row["data_found"] == "true" for row in audit_rows),
         main_output=main_output,
         audit_output=audit_output,
     )
-

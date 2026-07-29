@@ -1,16 +1,23 @@
-"""Command-line interface for the exposure builder."""
+"""Command-line interface for the municipality-year exposure builder."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from .pipeline import InputError, build_exposure
+from .pipeline import (
+    DEFAULT_END_YEAR,
+    DEFAULT_START_YEAR,
+    InputError,
+    build_exposure,
+)
 
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Build an ever-exposed AWM-cartel indicator by Austrian GKZ."
+        description=(
+            "Build a dated AWM-cartel exposure row for every Austrian GKZ-year."
+        )
     )
     parser.add_argument(
         "--input-dir",
@@ -23,6 +30,18 @@ def make_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data/processed"),
         help="Directory for generated CSV files (default: data/processed).",
+    )
+    parser.add_argument(
+        "--start-year",
+        type=int,
+        default=DEFAULT_START_YEAR,
+        help=f"First panel year, inclusive (default: {DEFAULT_START_YEAR}).",
+    )
+    parser.add_argument(
+        "--end-year",
+        type=int,
+        default=DEFAULT_END_YEAR,
+        help=f"Last panel year, inclusive (default: {DEFAULT_END_YEAR}).",
     )
     parser.add_argument(
         "--omit-data-found",
@@ -45,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         summary = build_exposure(
             input_dir=args.input_dir,
             output_dir=args.output_dir,
+            start_year=args.start_year,
+            end_year=args.end_year,
             include_data_found=not args.omit_data_found,
             write_audit=not args.no_audit,
         )
@@ -52,9 +73,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
 
     print(
-        f"Wrote {summary.municipalities} municipalities to "
-        f"{summary.main_output} "
-        f"({summary.exposed} exposed; {summary.with_data} with data)."
+        f"Wrote {summary.rows} rows "
+        f"({summary.municipalities} GKZ x {summary.years} years) to "
+        f"{summary.main_output}; {summary.exposed_rows} exposed rows across "
+        f"{summary.ever_exposed_municipalities} municipalities and "
+        f"{summary.with_data_rows} rows with data."
     )
     if summary.audit_output is not None:
         print(f"Wrote audit output to {summary.audit_output}.")
