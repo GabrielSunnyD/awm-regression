@@ -28,7 +28,7 @@ def read_csv(path: Path) -> list[dict[str, str]]:
 
 
 class ExposurePipelineTests(unittest.TestCase):
-    def test_all_three_rules_and_default_zero(self) -> None:
+    def test_builds_dated_panel_for_all_three_rules_and_unknown_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             inputs = root / "raw"
@@ -48,8 +48,22 @@ class ExposurePipelineTests(unittest.TestCase):
             )
             write_csv(
                 inputs / "direct_evidence.csv",
-                ["gkz", "exposed", "source_id"],
-                [{"gkz": "10101", "exposed": "1", "source_id": "court-1"}],
+                [
+                    "gkz",
+                    "exposed",
+                    "exposure_start",
+                    "exposure_end",
+                    "source_id",
+                ],
+                [
+                    {
+                        "gkz": "10101",
+                        "exposed": "1",
+                        "exposure_start": "2004",
+                        "exposure_end": "2004",
+                        "source_id": "court-1",
+                    }
+                ],
             )
             write_csv(
                 inputs / "cartel_periods.csv",
@@ -140,37 +154,108 @@ class ExposurePipelineTests(unittest.TestCase):
                 ],
             )
 
-            summary = build_exposure(inputs, outputs)
+            summary = build_exposure(
+                inputs, outputs, start_year=2004, end_year=2023
+            )
             self.assertEqual(summary.municipalities, 6)
-            self.assertEqual(summary.exposed, 3)
-            self.assertEqual(summary.with_data, 5)
+            self.assertEqual(summary.years, 20)
+            self.assertEqual(summary.rows, 120)
+            self.assertEqual(summary.exposed_rows, 16)
+            self.assertEqual(summary.ever_exposed_municipalities, 3)
+            self.assertEqual(summary.with_data_rows, 20)
 
-            main = {row["gkz"]: row for row in read_csv(summary.main_output)}
-            self.assertEqual(main["10101"], {
-                "gkz": "10101", "exposure": "1", "data_found": "true"
-            })
-            self.assertEqual(main["10102"]["exposure"], "1")
-            self.assertEqual(main["10103"], {
-                "gkz": "10103", "exposure": "0", "data_found": "true"
-            })
-            self.assertEqual(main["10104"]["exposure"], "1")
-            self.assertEqual(main["10105"]["data_found"], "true")
-            self.assertEqual(main["10106"], {
-                "gkz": "10106", "exposure": "0", "data_found": "false"
-            })
+            main = {
+                (row["gkz"], row["year"]): row
+                for row in read_csv(summary.main_output)
+            }
+            self.assertEqual(
+                main[("10101", "2004")],
+                {
+                    "gkz": "10101",
+                    "year": "2004",
+                    "exposure": "1",
+                    "data_found": "true",
+                },
+            )
+            self.assertEqual(main[("10101", "2005")]["data_found"], "false")
+            self.assertEqual(main[("10102", "2005")]["exposure"], "1")
+            self.assertEqual(main[("10102", "2011")]["data_found"], "false")
+            self.assertEqual(
+                main[("10103", "2022")],
+                {
+                    "gkz": "10103",
+                    "year": "2022",
+                    "exposure": "0",
+                    "data_found": "true",
+                },
+            )
+            self.assertEqual(main[("10104", "2006")]["exposure"], "0")
+            self.assertEqual(main[("10104", "2007")]["exposure"], "1")
+            self.assertEqual(main[("10104", "2016")]["data_found"], "false")
+            self.assertEqual(main[("10106", "2010")]["data_found"], "false")
 
             audit = {
-                row["gkz"]: row for row in read_csv(summary.audit_output)
+                (row["gkz"], row["year"]): row
+                for row in read_csv(summary.audit_output)
             }
-            self.assertEqual(audit["10102"]["exposure_reasons"], "contract")
             self.assertEqual(
-                audit["10102"]["positive_source_ids"], "award-1|decision-a"
+                audit[("10102", "2005")]["exposure_reasons"], "contract"
             )
             self.assertEqual(
-                audit["10104"]["exposure_reasons"], "association"
+                audit[("10102", "2005")]["positive_source_ids"],
+                "award-1|decision-a",
+            )
+            self.assertEqual(
+                audit[("10104", "2007")]["exposure_reasons"], "association"
             )
 
-    def test_missing_optional_files_produces_default_zeroes(self) -> None:
+    def test_same_calendar_year_without_same_day_overlap_is_not_exposed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "raw"
+            write_csv(
+                inputs / "municipalities.csv",
+                ["gkz"],
+                [{"gkz": "10101"}],
+            )
+            write_csv(
+                inputs / "cartel_periods.csv",
+                ["participant_id", "cartel_start", "cartel_end"],
+                [
+                    {
+                        "participant_id": "firm-a",
+                        "cartel_start": "2021-01-01",
+                        "cartel_end": "2021-03-31",
+                    }
+                ],
+            )
+            write_csv(
+                inputs / "contracts.csv",
+                ["gkz", "participant_id", "contract_start", "contract_end"],
+                [
+                    {
+                        "gkz": "10101",
+                        "participant_id": "firm-a",
+                        "contract_start": "2021-04-01",
+                        "contract_end": "2021-12-31",
+                    }
+                ],
+            )
+
+            summary = build_exposure(
+                inputs, root / "processed", start_year=2021, end_year=2021
+            )
+            self.assertEqual(
+                read_csv(summary.main_output)[0],
+                {
+                    "gkz": "10101",
+                    "year": "2021",
+                    "exposure": "0",
+                    "data_found": "true",
+                },
+            )
+
+    def test_missing_optional_files_produce_balanced_default_zeroes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             inputs = root / "raw"
@@ -181,17 +266,45 @@ class ExposurePipelineTests(unittest.TestCase):
             )
 
             summary = build_exposure(
-                inputs, root / "processed", include_data_found=False, write_audit=False
+                inputs,
+                root / "processed",
+                start_year=2001,
+                end_year=2002,
+                include_data_found=False,
+                write_audit=False,
             )
-            rows = read_csv(summary.main_output)
             self.assertEqual(
-                rows,
+                read_csv(summary.main_output),
                 [
-                    {"gkz": "00101", "exposure": "0"},
-                    {"gkz": "10102", "exposure": "0"},
+                    {"gkz": "00101", "year": "2001", "exposure": "0"},
+                    {"gkz": "00101", "year": "2002", "exposure": "0"},
+                    {"gkz": "10102", "year": "2001", "exposure": "0"},
+                    {"gkz": "10102", "year": "2002", "exposure": "0"},
                 ],
             )
+            self.assertEqual(summary.rows, 4)
             self.assertIsNone(summary.audit_output)
+
+    def test_default_panel_range_is_2001_through_2024(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "raw"
+            write_csv(
+                inputs / "municipalities.csv",
+                ["gkz"],
+                [{"gkz": "10101"}],
+            )
+
+            summary = build_exposure(
+                inputs,
+                root / "processed",
+                write_audit=False,
+            )
+            rows = read_csv(summary.main_output)
+            self.assertEqual(summary.years, 24)
+            self.assertEqual(summary.rows, 24)
+            self.assertEqual(rows[0]["year"], "2001")
+            self.assertEqual(rows[-1]["year"], "2024")
 
     def test_unknown_evidence_gkz_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -204,11 +317,20 @@ class ExposurePipelineTests(unittest.TestCase):
             )
             write_csv(
                 inputs / "direct_evidence.csv",
-                ["gkz", "exposed"],
-                [{"gkz": "99999", "exposed": "1"}],
+                ["gkz", "exposed", "exposure_start", "exposure_end"],
+                [
+                    {
+                        "gkz": "99999",
+                        "exposed": "1",
+                        "exposure_start": "2010",
+                        "exposure_end": "2010",
+                    }
+                ],
             )
 
-            with self.assertRaisesRegex(InputError, "territorial reference date"):
+            with self.assertRaisesRegex(
+                InputError, "harmonized territorial reference year"
+            ):
                 build_exposure(inputs, root / "processed")
 
     def test_invalid_boolean_fails(self) -> None:
@@ -222,14 +344,62 @@ class ExposurePipelineTests(unittest.TestCase):
             )
             write_csv(
                 inputs / "direct_evidence.csv",
-                ["gkz", "exposed"],
-                [{"gkz": "10101", "exposed": "maybe"}],
+                ["gkz", "exposed", "exposure_start", "exposure_end"],
+                [
+                    {
+                        "gkz": "10101",
+                        "exposed": "maybe",
+                        "exposure_start": "2010",
+                        "exposure_end": "2010",
+                    }
+                ],
             )
 
             with self.assertRaisesRegex(InputError, "expected a boolean"):
                 build_exposure(inputs, root / "processed")
 
+    def test_undated_evidence_fails_instead_of_applying_to_every_year(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "raw"
+            write_csv(
+                inputs / "municipalities.csv",
+                ["gkz"],
+                [{"gkz": "10101"}],
+            )
+            write_csv(
+                inputs / "direct_evidence.csv",
+                ["gkz", "exposed", "exposure_start", "exposure_end"],
+                [
+                    {
+                        "gkz": "10101",
+                        "exposed": "1",
+                        "exposure_start": "",
+                        "exposure_end": "",
+                    }
+                ],
+            )
+
+            with self.assertRaisesRegex(InputError, "at least one of"):
+                build_exposure(inputs, root / "processed")
+
+    def test_invalid_panel_range_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "raw"
+            write_csv(
+                inputs / "municipalities.csv",
+                ["gkz"],
+                [{"gkz": "10101"}],
+            )
+            with self.assertRaisesRegex(InputError, "start_year"):
+                build_exposure(
+                    inputs,
+                    root / "processed",
+                    start_year=2024,
+                    end_year=2001,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
-

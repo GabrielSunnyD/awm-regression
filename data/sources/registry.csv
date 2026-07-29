@@ -1,8 +1,7 @@
 source_id,source_url,filename,description
-statistik_austria_municipalities_2026,https://www.statistik.gv.at/gs-open/GEODATA/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=GEODATA:STATISTIK_AUSTRIA_GEM_20260101&outputFormat=SHAPE-ZIP&format_options=CHARSET:UTF-8,downloads/statistik_austria_municipalities_2026.zip,"Statistics Austria, municipalities at 2026-01-01 (ID and NAME attributes)"
+statistik_austria_municipalities_2024,https://www.statistik.gv.at/gs-open/GEODATA/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=GEODATA:STATISTIK_AUSTRIA_GEM_20240101&outputFormat=SHAPE-ZIP&format_options=CHARSET:UTF-8,downloads/statistik_austria_municipalities_2024.zip,"Statistics Austria, municipalities at 2024-01-01 (ID and NAME attributes)"
 bwb_faq_2026,https://www.bwb.gv.at/fileadmin/user_upload/FAQ_Abfallkartell_Juni_2026__2_Barrierefrei.pdf,downloads/bwb_faq_abfallkartell_2026.pdf,"Federal Competition Authority, AWM cartel FAQ, June 2026"
 edikt_fcc_27kt1_24k,https://edikte.justiz.gv.at/edikte/ek/ekedi17.nsf/alldoc/da55f0c6e1e6225bc1258c9700286eca!OpenDocument,downloads/edikt_fcc_27kt1_24k.html,"Cartel Court decision 27 Kt 1/24k concerning FCC Austria Abfall Service AG"
 edikt_huber_28kt1_25v,https://edikte.justiz.gv.at/edikte/ek/ekedi17.nsf/alldoc/673039c9b6c03c48c1258d14002a37b1!OpenDocument,downloads/edikt_huber_28kt1_25v.html,"Cartel Court decision 28 Kt 1/25v concerning Huber entities"
 gva_moedling_members,https://gvamoedling.at/ueber-uns/verband-und-gemeinden/,downloads/gva_moedling_members.html,"Official GVA Mödling association history and dated municipality additions"
 gabl_members,https://gabl.gv.at/ueber-uns/verband-und-gemeinden/,downloads/gabl_members.html,"Official GABL Bruck an der Leitha current association member page"
-

@@ -10,11 +10,13 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import httpx
 import shapefile
 
+from awm_exposure.pipeline import build_exposure
 from awm_exposure.sources import (
     RAW_SCHEMAS,
     SourceDataError,
     build_raw_data,
     download_sources,
+    validate_sources,
 )
 
 
@@ -89,11 +91,21 @@ class SourcePipelineTests(unittest.TestCase):
     def write_curated(self, municipality_name: str = "Alpha") -> None:
         write_csv(
             self.curated / "direct_evidence.csv",
-            ["municipality_name", "exposed", "source_id", "source_url", "notes"],
+            [
+                "municipality_name",
+                "exposed",
+                "exposure_start",
+                "exposure_end",
+                "source_id",
+                "source_url",
+                "notes",
+            ],
             [
                 {
                     "municipality_name": municipality_name,
                     "exposed": "1",
+                    "exposure_start": "2019",
+                    "exposure_end": "2019",
                     "source_id": "court",
                     "notes": "Reviewed court finding",
                 }
@@ -223,6 +235,22 @@ class SourcePipelineTests(unittest.TestCase):
         self.assertEqual(len(source_log), 3)
         self.assertTrue(all(row["sha256"] == "" for row in source_log))
 
+        panel_summary = build_exposure(
+            self.raw,
+            self.root / "processed",
+            start_year=2019,
+            end_year=2020,
+        )
+        panel = {
+            (row["gkz"], row["year"]): row
+            for row in read_csv(panel_summary.main_output)
+        }
+        self.assertEqual(panel_summary.rows, 6)
+        self.assertEqual(panel[("10001", "2019")]["exposure"], "1")
+        self.assertEqual(panel[("10001", "2020")]["data_found"], "false")
+        self.assertEqual(panel[("10002", "2019")]["exposure"], "1")
+        self.assertEqual(panel[("10002", "2020")]["exposure"], "1")
+
     def test_unknown_municipality_name_fails_instead_of_fuzzy_matching(self) -> None:
         self.write_registry()
         write_municipality_zip(
@@ -244,7 +272,11 @@ class SourcePipelineTests(unittest.TestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             calls.append(str(request.url))
-            return httpx.Response(200, request=request, content=b"source bytes")
+            if request.url.path.endswith(".zip"):
+                content = b"PK\x03\x04source bytes"
+            else:
+                content = b"<!doctype html><html><body>source bytes</body></html>"
+            return httpx.Response(200, request=request, content=content)
 
         with httpx.Client(transport=httpx.MockTransport(handler)) as client:
             first = download_sources(self.sources, client=client)
@@ -262,6 +294,16 @@ class SourcePipelineTests(unittest.TestCase):
         self.assertTrue(
             all(len(source["sha256"]) == 64 for source in manifest["sources"])
         )
+        self.write_curated()
+        validation = validate_sources(self.sources)
+        self.assertEqual(validation.registered_sources, 3)
+        self.assertEqual(validation.verified_downloads, 3)
+
+        (self.sources / "downloads/court.html").write_text(
+            "<html>tampered</html>", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(SourceDataError, "(size|checksum) changed"):
+            validate_sources(self.sources)
 
     def test_registry_rejects_path_traversal(self) -> None:
         self.write_registry(filename="../outside.zip")

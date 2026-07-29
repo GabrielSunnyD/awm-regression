@@ -5,7 +5,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .sources import SourceDataError, build_raw_data, download_sources
+from .sources import (
+    SourceDataError,
+    build_raw_data,
+    download_sources,
+    validate_sources,
+)
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -14,7 +19,7 @@ def make_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=("download", "build", "all"),
+        choices=("download", "validate", "build", "all"),
         nargs="?",
         default="all",
         help="Operation to run (default: all).",
@@ -38,8 +43,11 @@ def make_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--municipality-source-id",
-        default="statistik_austria_municipalities_2026",
-        help="Registry source_id for the selected territorial vintage.",
+        default="statistik_austria_municipalities_2024",
+        help=(
+            "Registry source_id for the harmonized GKZ reference vintage "
+            "(default: statistik_austria_municipalities_2024)."
+        ),
     )
     return parser
 
@@ -55,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"Sources: {summary.downloaded} downloaded, "
                 f"{summary.cached} reused; manifest: {summary.manifest_path}"
             )
+        if args.command in {"validate", "build", "all"}:
+            validation = validate_sources(args.sources_dir)
+            print(
+                f"Validation: {validation.verified_downloads} source snapshots "
+                f"and {validation.curated_rows} curated rows verified."
+            )
         if args.command in {"build", "all"}:
             summary = build_raw_data(
                 args.sources_dir,
@@ -68,4 +82,3 @@ def main(argv: list[str] | None = None) -> int:
     except SourceDataError as exc:
         parser.error(str(exc))
     return 0
-

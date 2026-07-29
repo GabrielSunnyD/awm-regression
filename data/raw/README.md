@@ -1,10 +1,13 @@
-# Raw inputs
+# Normalized raw inputs
 
-Run `uv run awm-sources all` to create the six CSV inputs from the official
-downloads and curated source records under `data/sources`. Generated CSV files
-are ignored by Git.
+Run `uv run awm-sources all` or `uv run awm-build` to generate:
 
-Do not hand-edit generated files. Amend the source registry or curated records
-instead, then rebuild so every value remains reproducible.
+- the harmonized 2024 `municipalities.csv` universe;
+- five dated evidence tables consumed by the classifier; and
+- `source_log.csv`, which carries registry and checksum provenance forward.
 
+Generated CSVs are ignored by Git. Do not hand-edit them. Amend
+`data/sources/registry.csv` or `data/sources/curated/*.csv`, then rebuild.
 
+The annual classifier requires date columns on every evidence channel.
+Undated rows fail rather than being applied to all 24 panel years.
