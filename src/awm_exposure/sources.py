@@ -25,10 +25,12 @@ import io
 import json
 import os
 import tempfile
+from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
+from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
 import httpx
@@ -49,6 +51,7 @@ class DownloadSummary:
 @dataclass(frozen=True)
 class RawBuildSummary:
     municipalities: int
+    crosswalk_rows: int
     evidence_rows: int
     raw_dir: Path
 
@@ -76,6 +79,9 @@ RAW_SCHEMAS: dict[str, list[str]] = {
         "participant_name",
         "cartel_start",
         "cartel_end",
+        "legal_status",
+        "eligible_for_exposure",
+        "gkz_prefixes",
         "source_id",
         "source_url",
         "notes",
@@ -108,6 +114,17 @@ RAW_SCHEMAS: dict[str, list[str]] = {
         "source_url",
         "notes",
     ],
+    "municipality_crosswalk.csv": [
+        "historical_gkz",
+        "historical_name",
+        "current_gkz",
+        "current_name",
+        "mapping_status",
+        "effective_dates",
+        "change_reasons",
+        "source_id",
+        "source_url",
+    ],
 }
 
 _CURATED_SCHEMAS: dict[str, set[str]] = {
@@ -122,6 +139,9 @@ _CURATED_SCHEMAS: dict[str, set[str]] = {
         "participant_id",
         "cartel_start",
         "cartel_end",
+        "legal_status",
+        "eligible_for_exposure",
+        "gkz_prefixes",
         "source_id",
     },
     "contracts.csv": {
@@ -129,6 +149,9 @@ _CURATED_SCHEMAS: dict[str, set[str]] = {
         "participant_id",
         "contract_start",
         "contract_end",
+        "review_status",
+        "reviewer",
+        "reviewed_at",
         "source_id",
     },
     "association_exposure.csv": {
@@ -146,6 +169,26 @@ _CURATED_SCHEMAS: dict[str, set[str]] = {
         "source_id",
     },
 }
+
+_SUPPORT_SCHEMAS: dict[str, set[str]] = {
+    "curated/participant_aliases.csv": {
+        "participant_id",
+        "alias",
+        "source_id",
+    },
+    "review/fcc_public_project_review.csv": {
+        "source_year",
+        "project_name",
+        "review_status",
+        "disposition",
+        "target_id",
+        "source_id",
+    },
+}
+
+_LEGAL_STATUSES = {"final", "pending_admitted"}
+_REVIEW_STATUSES = {"accepted", "pending", "rejected"}
+_FCC_REVIEW_STATUSES = {"accepted", "pending", "excluded"}
 
 
 def _read_csv(path: Path, required: set[str]) -> list[dict[str, str]]:
@@ -353,7 +396,7 @@ def download_sources(
             transport=httpx.HTTPTransport(retries=3),
             headers={
                 "User-Agent": (
-                    "awm-regression/0.3 "
+                    "awm-regression/0.4 "
                     "(academic reproducibility; source contact in repository)"
                 )
             },
@@ -469,6 +512,57 @@ def validate_sources(sources_dir: Path | str) -> ValidationSummary:
         rows = _read_csv(path, required)
         for row in rows:
             _validate_source(row, path, registry)
+            _validate_curated_row(filename, row, path)
+        curated_rows += len(rows)
+
+    participant_ids = {
+        row["participant_id"]
+        for row in _read_csv(
+            sources_dir / "curated" / "cartel_periods.csv",
+            _CURATED_SCHEMAS["cartel_periods.csv"],
+        )
+    }
+    for row in _read_csv(
+        sources_dir / "curated" / "contracts.csv",
+        _CURATED_SCHEMAS["contracts.csv"],
+    ):
+        if (
+            row.get("participant_id")
+            and row["participant_id"] not in participant_ids
+        ):
+            path = sources_dir / "curated" / "contracts.csv"
+            raise SourceDataError(
+                f"{path}:{row['_line']}: unknown participant_id "
+                f"{row['participant_id']!r}"
+            )
+    for relative_path, required in _SUPPORT_SCHEMAS.items():
+        path = sources_dir / relative_path
+        rows = _read_csv(path, required)
+        for row in rows:
+            _validate_source(row, path, registry)
+            if relative_path.endswith("participant_aliases.csv"):
+                if not row["alias"]:
+                    raise SourceDataError(
+                        f"{path}:{row['_line']}: alias cannot be blank"
+                    )
+                if row["participant_id"] not in participant_ids:
+                    raise SourceDataError(
+                        f"{path}:{row['_line']}: unknown participant_id "
+                        f"{row['participant_id']!r}"
+                    )
+            elif row["review_status"] not in _FCC_REVIEW_STATUSES:
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: review_status must be one of "
+                    f"{', '.join(sorted(_FCC_REVIEW_STATUSES))}"
+                )
+            elif (
+                row["review_status"] == "accepted"
+                and not row.get("target_id", "").strip()
+            ):
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: an accepted FCC review row "
+                    "requires target_id"
+                )
         curated_rows += len(rows)
 
     return ValidationSummary(
@@ -568,31 +662,423 @@ def _validate_source(
     return source_id
 
 
+def _parse_source_bool(value: str, path: Path, row: Mapping[str, str]) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "n"}:
+        return False
+    raise SourceDataError(
+        f"{path}:{row.get('_line', '?')}: expected a boolean, got {value!r}"
+    )
+
+
+def _validate_curated_row(
+    filename: str, row: Mapping[str, str], path: Path
+) -> None:
+    """Validate researcher decisions that cannot be checked by CSV headers.
+
+    Mechanical validation cannot establish that a legal interpretation is
+    substantively correct.  It can, however, prevent a pending proceeding or
+    an unreviewed procurement candidate from silently entering treatment.
+    """
+
+    if filename == "cartel_periods.csv":
+        status = row["legal_status"]
+        if status not in _LEGAL_STATUSES:
+            raise SourceDataError(
+                f"{path}:{row['_line']}: legal_status must be one of "
+                f"{', '.join(sorted(_LEGAL_STATUSES))}"
+            )
+        eligible = _parse_source_bool(
+            row["eligible_for_exposure"], path, row
+        )
+        if status != "final" and eligible:
+            raise SourceDataError(
+                f"{path}:{row['_line']}: a non-final participant period "
+                "cannot be eligible_for_exposure"
+            )
+        prefixes = [
+            prefix.strip()
+            for prefix in row.get("gkz_prefixes", "").split("|")
+            if prefix.strip()
+        ]
+        if len(prefixes) != len(set(prefixes)) or any(
+            len(prefix) != 1 or prefix not in "123456789"
+            for prefix in prefixes
+        ):
+            raise SourceDataError(
+                f"{path}:{row['_line']}: gkz_prefixes must be unique "
+                "one-digit state prefixes separated by |"
+            )
+
+    if filename == "contracts.csv":
+        status = row["review_status"]
+        if status not in _REVIEW_STATUSES:
+            raise SourceDataError(
+                f"{path}:{row['_line']}: review_status must be one of "
+                f"{', '.join(sorted(_REVIEW_STATUSES))}"
+            )
+        if status == "accepted":
+            missing = [
+                field
+                for field in (
+                    "municipality_name",
+                    "participant_id",
+                    "contract_start",
+                    "contract_end",
+                    "reviewer",
+                    "reviewed_at",
+                )
+                if not row.get(field, "").strip()
+            ]
+            if missing:
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: accepted contract is missing "
+                    f"{', '.join(missing)}"
+                )
+            try:
+                date.fromisoformat(row["reviewed_at"])
+            except ValueError as exc:
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: reviewed_at must be YYYY-MM-DD"
+                ) from exc
+
+
+_ODS_TABLE = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+_ODS_TEXT = "urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+
+
+def _ods_rows(
+    ods_content: bytes, sheet_name: str, *, required: bool = True
+) -> list[list[str]]:
+    """Return text cells from one ODS sheet using only the standard library."""
+
+    with ZipFile(io.BytesIO(ods_content)) as archive:
+        try:
+            root = ElementTree.fromstring(archive.read("content.xml"))
+        except (KeyError, ElementTree.ParseError) as exc:
+            raise SourceDataError("Administrative-change ODS is malformed") from exc
+
+    table = next(
+        (
+            candidate
+            for candidate in root.findall(f".//{{{_ODS_TABLE}}}table")
+            if candidate.get(f"{{{_ODS_TABLE}}}name") == sheet_name
+        ),
+        None,
+    )
+    if table is None:
+        if not required:
+            return []
+        raise SourceDataError(
+            f"Administrative-change ODS lacks sheet {sheet_name!r}"
+        )
+
+    output: list[list[str]] = []
+    for row in table.findall(f"{{{_ODS_TABLE}}}table-row"):
+        row_repeat = int(
+            row.get(f"{{{_ODS_TABLE}}}number-rows-repeated", "1")
+        )
+        values: list[str] = []
+        for cell in row:
+            if cell.tag not in {
+                f"{{{_ODS_TABLE}}}table-cell",
+                f"{{{_ODS_TABLE}}}covered-table-cell",
+            }:
+                continue
+            column_repeat = int(
+                cell.get(f"{{{_ODS_TABLE}}}number-columns-repeated", "1")
+            )
+            paragraphs = cell.findall(f".//{{{_ODS_TEXT}}}p")
+            text = " ".join(
+                "".join(paragraph.itertext()).strip()
+                for paragraph in paragraphs
+            ).strip()
+            # Empty tail columns may be repeated tens of thousands of times.
+            # They carry no data and need not be materialized.
+            if text or column_repeat <= 64:
+                values.extend([text] * column_repeat)
+        if any(values):
+            output.extend([values] * min(row_repeat, 1))
+    return output
+
+
+def _municipality_crosswalk_from_zip(
+    path: Path,
+    municipalities: Sequence[Mapping[str, str]],
+    *,
+    source_id: str,
+    source_url: str,
+    cutoff: date = date(2024, 1, 1),
+) -> list[dict[str, str]]:
+    """Map changed GKZ values deterministically into the selected universe.
+
+    Statistics Austria's change table includes both one-to-one renumberings
+    and genuine one-to-many divisions.  One-to-one chains can be normalized
+    safely.  A split is retained as multiple rows with
+    ``split_requires_review`` so no source row can be assigned to every
+    successor by accident.
+    """
+
+    try:
+        with ZipFile(path) as archive:
+            ods_member = next(
+                (
+                    member
+                    for member in archive.namelist()
+                    if Path(member).name == "aenderungenGemeinden_ab2002.ods"
+                ),
+                None,
+            )
+            if ods_member is None:
+                raise SourceDataError(
+                    f"{path} lacks aenderungenGemeinden_ab2002.ods"
+                )
+            ods_content = archive.read(ods_member)
+    except BadZipFile as exc:
+        raise SourceDataError(
+            f"Administrative-change source is not a valid ZIP: {path}"
+        ) from exc
+
+    rows = _ods_rows(ods_content, "alle_GKZaenderungen")
+    header_index = next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if row and row[0] == "Gemeindekennziffer alt"
+        ),
+        None,
+    )
+    if header_index is None:
+        raise SourceDataError(
+            "Administrative-change ODS lacks the expected GKZ header"
+        )
+    header = rows[header_index]
+    required = {
+        "Gemeindekennziffer alt",
+        "Gemeinde alt",
+        "Gemeindekennziffer neu",
+        "Gemeinde neu",
+        "in Kraft seit",
+        "Änderungsgrund",
+    }
+    if missing := required - set(header):
+        raise SourceDataError(
+            "Administrative-change ODS is missing column(s): "
+            + ", ".join(sorted(missing))
+        )
+    positions = {name: header.index(name) for name in required}
+
+    edges: defaultdict[str, list[dict[str, str]]] = defaultdict(list)
+    historical_names: defaultdict[str, set[str]] = defaultdict(set)
+    for values in rows[header_index + 1 :]:
+        if len(values) <= max(positions.values()):
+            continue
+        effective_text = values[positions["in Kraft seit"]].strip()
+        try:
+            effective = datetime.strptime(effective_text, "%d.%m.%Y").date()
+        except ValueError as exc:
+            raise SourceDataError(
+                f"Invalid effective date in administrative-change ODS: "
+                f"{effective_text!r}"
+            ) from exc
+        if effective > cutoff:
+            continue
+        old_gkz = values[positions["Gemeindekennziffer alt"]].strip().zfill(5)
+        new_gkz = values[positions["Gemeindekennziffer neu"]].strip().zfill(5)
+        old_name = values[positions["Gemeinde alt"]].strip()
+        if not (
+            len(old_gkz) == len(new_gkz) == 5
+            and old_gkz.isdigit()
+            and new_gkz.isdigit()
+            and old_name
+        ):
+            raise SourceDataError(
+                "Invalid GKZ/name row in administrative-change ODS"
+            )
+        historical_names[old_gkz].add(old_name)
+        historical_names[new_gkz].add(
+            values[positions["Gemeinde neu"]].strip()
+        )
+        edges[old_gkz].append(
+            {
+                "new_gkz": new_gkz,
+                "effective": effective.isoformat(),
+                "reason": values[positions["Änderungsgrund"]].strip(),
+            }
+        )
+
+    current_names = {
+        row["gkz"]: row["municipality_name"] for row in municipalities
+    }
+    current_gkz_by_name: defaultdict[str, set[str]] = defaultdict(set)
+    for gkz, name in current_names.items():
+        current_gkz_by_name[name].add(gkz)
+
+    node_dates: defaultdict[str, set[str]] = defaultdict(set)
+    node_reasons: defaultdict[str, set[str]] = defaultdict(set)
+    rename_rows = _ods_rows(
+        ods_content, "Namensaenderungen", required=False
+    )
+    rename_header_index = next(
+        (
+            index
+            for index, row in enumerate(rename_rows)
+            if row and row[0] == "Gemeindekennziffer"
+        ),
+        None,
+    )
+    if rename_header_index is not None:
+        rename_header = rename_rows[rename_header_index]
+        rename_positions = {
+            name: rename_header.index(name)
+            for name in (
+                "Gemeindekennziffer",
+                "Gemeindename alt",
+                "Gemeindename neu",
+                "in Kraft seit",
+            )
+        }
+        for values in rename_rows[rename_header_index + 1 :]:
+            if len(values) <= max(rename_positions.values()):
+                continue
+            effective_text = values[
+                rename_positions["in Kraft seit"]
+            ].strip()
+            raw_gkz = values[
+                rename_positions["Gemeindekennziffer"]
+            ].strip()
+            if not effective_text or not raw_gkz.isdigit():
+                continue
+            try:
+                effective = datetime.strptime(
+                    effective_text, "%d.%m.%Y"
+                ).date()
+            except ValueError as exc:
+                raise SourceDataError(
+                    "Invalid effective date in municipality-name change "
+                    f"sheet: {effective_text!r}"
+                ) from exc
+            if effective > cutoff:
+                continue
+            gkz = raw_gkz.zfill(5)
+            historical_names[gkz].update(
+                {
+                    values[rename_positions["Gemeindename alt"]].strip(),
+                    values[rename_positions["Gemeindename neu"]].strip(),
+                }
+            )
+            node_dates[gkz].add(effective.isoformat())
+            node_reasons[gkz].add("Namensänderung")
+
+    memo: dict[str, tuple[set[str], set[str], set[str]]] = {}
+
+    def resolve(
+        gkz: str, trail: tuple[str, ...] = ()
+    ) -> tuple[set[str], set[str], set[str]]:
+        if gkz in current_names:
+            return {gkz}, set(), set()
+        if gkz in memo:
+            return memo[gkz]
+        if gkz in trail:
+            raise SourceDataError(
+                "Cycle in Statistics Austria administrative-change table: "
+                + " -> ".join((*trail, gkz))
+            )
+        targets: set[str] = set()
+        dates: set[str] = set(node_dates[gkz])
+        reasons: set[str] = set(node_reasons[gkz])
+        for edge in edges.get(gkz, []):
+            child_targets, child_dates, child_reasons = resolve(
+                edge["new_gkz"], (*trail, gkz)
+            )
+            targets.update(child_targets)
+            dates.update(child_dates)
+            reasons.update(child_reasons)
+            dates.add(edge["effective"])
+            if edge["reason"]:
+                reasons.add(edge["reason"])
+        if not targets:
+            for historical_name in historical_names.get(gkz, set()):
+                targets.update(current_gkz_by_name.get(historical_name, set()))
+        memo[gkz] = targets, dates, reasons
+        return memo[gkz]
+
+    output: list[dict[str, str]] = []
+    historical_codes = set(edges) | {
+        gkz for gkz in historical_names if gkz not in current_names
+    }
+    for old_gkz in sorted(historical_codes):
+        targets, dates, reasons = resolve(old_gkz)
+        if not targets:
+            raise SourceDataError(
+                f"Historical GKZ {old_gkz} does not resolve to the selected "
+                f"{cutoff.year} municipality universe"
+            )
+        status = "automatic" if len(targets) == 1 else "split_requires_review"
+        old_names = "|".join(sorted(historical_names[old_gkz]))
+        for target in sorted(targets):
+            output.append(
+                {
+                    "historical_gkz": old_gkz,
+                    "historical_name": old_names,
+                    "current_gkz": target,
+                    "current_name": current_names[target],
+                    "mapping_status": status,
+                    "effective_dates": "|".join(sorted(dates)),
+                    "change_reasons": "|".join(sorted(reasons)),
+                    "source_id": source_id,
+                    "source_url": source_url,
+                }
+            )
+    return output
+
+
 def _resolve_gkz(
     row: Mapping[str, str],
     path: Path,
     gkz_by_name: Mapping[str, Sequence[str]],
     municipality_names: Mapping[str, str],
+    crosswalk_by_gkz: Mapping[str, Sequence[str]],
+    gkz_by_historical_name: Mapping[str, Sequence[str]],
+    historical_names_by_gkz: Mapping[str, Sequence[str]],
 ) -> str:
     supplied_gkz = row.get("gkz", "").strip()
     supplied_name = row.get("municipality_name", "").strip()
     if supplied_gkz:
         gkz = supplied_gkz.zfill(5)
-        if gkz not in municipality_names:
+        if gkz in municipality_names:
+            candidates = [gkz]
+            valid_names = [municipality_names[gkz]]
+        else:
+            candidates = list(crosswalk_by_gkz.get(gkz, ()))
+            valid_names = list(historical_names_by_gkz.get(gkz, ()))
+        if not candidates:
             raise SourceDataError(
-                f"{path}:{row.get('_line', '?')}: unknown GKZ {gkz}"
+                f"{path}:{row.get('_line', '?')}: unknown current or "
+                f"historical GKZ {gkz}"
             )
-        if supplied_name and municipality_names[gkz] != supplied_name:
+        if len(candidates) > 1:
             raise SourceDataError(
-                f"{path}:{row.get('_line', '?')}: GKZ {gkz} is "
-                f"{municipality_names[gkz]!r}, not {supplied_name!r}"
+                f"{path}:{row.get('_line', '?')}: historical GKZ {gkz} "
+                "was split; supply the intended current gkz after reviewing "
+                f"successors {', '.join(candidates)}"
             )
-        return gkz
+        if supplied_name and supplied_name not in valid_names:
+            raise SourceDataError(
+                f"{path}:{row.get('_line', '?')}: GKZ {gkz} does not match "
+                f"municipality name {supplied_name!r}"
+            )
+        return candidates[0]
     candidates = gkz_by_name.get(supplied_name, ())
+    if not candidates:
+        candidates = gkz_by_historical_name.get(supplied_name, ())
     if not candidates:
         raise SourceDataError(
             f"{path}:{row.get('_line', '?')}: municipality name "
-            f"{supplied_name!r} is not an exact match in the selected GKZ vintage"
+            f"{supplied_name!r} is not an exact match in the selected GKZ "
+            "vintage or the official historical crosswalk"
         )
     if len(candidates) > 1:
         raise SourceDataError(
@@ -637,8 +1123,10 @@ def build_raw_data(
     raw_dir: Path | str,
     *,
     municipality_source_id: str = "statistik_austria_municipalities_2024",
+    municipality_changes_source_id: str | None = None,
+    municipality_reference_date: date = date(2024, 1, 1),
 ) -> RawBuildSummary:
-    """Build all six raw CSVs from downloaded and reviewed source records."""
+    """Build normalized CSVs from downloaded and reviewed source records."""
 
     sources_dir = Path(sources_dir)
     raw_dir = Path(raw_dir)
@@ -664,6 +1152,58 @@ def build_raw_data(
         name: [] for name in RAW_SCHEMAS
     }
     output["municipalities.csv"] = municipalities
+
+    crosswalk: list[dict[str, str]] = []
+    if municipality_changes_source_id is not None:
+        if municipality_changes_source_id not in registry:
+            raise SourceDataError(
+                "Municipality-change source_id is not registered: "
+                f"{municipality_changes_source_id}"
+            )
+        change_source = registry[municipality_changes_source_id]
+        change_path = _safe_target(sources_dir, change_source["filename"])
+        crosswalk = _municipality_crosswalk_from_zip(
+            change_path,
+            municipalities,
+            source_id=municipality_changes_source_id,
+            source_url=change_source["source_url"],
+            cutoff=municipality_reference_date,
+        )
+    output["municipality_crosswalk.csv"] = crosswalk
+
+    crosswalk_by_gkz: defaultdict[str, list[str]] = defaultdict(list)
+    gkz_by_historical_name: defaultdict[str, list[str]] = defaultdict(list)
+    historical_names_by_gkz: defaultdict[str, list[str]] = defaultdict(list)
+    for crosswalk_row in crosswalk:
+        old_gkz = crosswalk_row["historical_gkz"]
+        current_gkz = crosswalk_row["current_gkz"]
+        crosswalk_by_gkz[old_gkz].append(current_gkz)
+        for historical_name in crosswalk_row["historical_name"].split("|"):
+            if historical_name:
+                historical_names_by_gkz[old_gkz].append(historical_name)
+                gkz_by_historical_name[historical_name].append(current_gkz)
+    crosswalk_by_gkz = defaultdict(
+        list,
+        {
+            key: sorted(set(values))
+            for key, values in crosswalk_by_gkz.items()
+        },
+    )
+    gkz_by_historical_name = defaultdict(
+        list,
+        {
+            key: sorted(set(values))
+            for key, values in gkz_by_historical_name.items()
+        },
+    )
+    historical_names_by_gkz = defaultdict(
+        list,
+        {
+            key: sorted(set(values))
+            for key, values in historical_names_by_gkz.items()
+        },
+    )
+
     curated_dir = sources_dir / "curated"
 
     for filename, required in _CURATED_SCHEMAS.items():
@@ -672,6 +1212,12 @@ def build_raw_data(
         target_rows = output[filename]
         for row in rows:
             source_id = _validate_source(row, path, registry)
+            _validate_curated_row(filename, row, path)
+            if (
+                filename == "contracts.csv"
+                and row["review_status"] != "accepted"
+            ):
+                continue
             normalized = {field: row.get(field, "") for field in RAW_SCHEMAS[filename]}
             normalized["source_id"] = source_id
             normalized["source_url"] = (
@@ -683,7 +1229,13 @@ def build_raw_data(
                 "association_memberships.csv",
             }:
                 normalized["gkz"] = _resolve_gkz(
-                    row, path, gkz_by_name, municipality_names
+                    row,
+                    path,
+                    gkz_by_name,
+                    municipality_names,
+                    crosswalk_by_gkz,
+                    gkz_by_historical_name,
+                    historical_names_by_gkz,
                 )
             target_rows.append(normalized)
 
@@ -725,6 +1277,9 @@ def build_raw_data(
     evidence_rows = sum(
         len(output[filename])
         for filename in RAW_SCHEMAS
-        if filename != "municipalities.csv"
+        if filename
+        not in {"municipalities.csv", "municipality_crosswalk.csv"}
     )
-    return RawBuildSummary(len(municipalities), evidence_rows, raw_dir)
+    return RawBuildSummary(
+        len(municipalities), len(crosswalk), evidence_rows, raw_dir
+    )

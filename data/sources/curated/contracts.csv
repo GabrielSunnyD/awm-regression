@@ -1,2 +1,1 @@
-municipality_name,participant_id,contract_start,contract_end,source_id,source_url,notes
-
+candidate_id,review_status,municipality_name,gkz,participant_id,contract_start,contract_end,source_id,source_url,reviewer,reviewed_at,notes

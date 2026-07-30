@@ -359,13 +359,43 @@ def build_exposure(
                 positive_sources[key].extend(_source_ids(row))
 
     periods_by_participant: defaultdict[
-        str, list[tuple[Interval, Mapping[str, str]]]
+        str, list[tuple[Interval, frozenset[str], Mapping[str, str]]]
     ] = defaultdict(list)
     for row in period_rows:
         context = _context(periods_path, row)
         participant_id = _require_identifier(row, "participant_id", context)
         interval = _parse_interval(row, "cartel_start", "cartel_end", context)
-        periods_by_participant[participant_id].append((interval, row))
+        legal_status = row.get("legal_status", "").strip() or "final"
+        if legal_status not in {"final", "pending_admitted"}:
+            raise InputError(
+                f"{context}: legal_status must be final or pending_admitted"
+            )
+        eligible = _parse_bool(
+            row.get("eligible_for_exposure", "").strip() or "true",
+            context,
+        )
+        if legal_status != "final" and eligible:
+            raise InputError(
+                f"{context}: a non-final participant period cannot be "
+                "eligible_for_exposure"
+            )
+        prefixes = [
+            value.strip()
+            for value in row.get("gkz_prefixes", "").split("|")
+            if value.strip()
+        ]
+        if len(prefixes) != len(set(prefixes)) or any(
+            len(value) != 1 or value not in "123456789"
+            for value in prefixes
+        ):
+            raise InputError(
+                f"{context}: gkz_prefixes must be unique one-digit state "
+                "prefixes separated by |"
+            )
+        if eligible:
+            periods_by_participant[participant_id].append(
+                (interval, frozenset(prefixes), row)
+            )
 
     for row in contract_rows:
         context = _context(contracts_path, row)
@@ -383,9 +413,11 @@ def build_exposure(
             data_found.add(key)
             contract_count[key] += 1
 
-            for cartel_interval, period_row in periods_by_participant.get(
+            for cartel_interval, prefixes, period_row in periods_by_participant.get(
                 participant_id, []
             ):
+                if prefixes and gkz[0] not in prefixes:
+                    continue
                 if _overlaps_all(contract_interval, cartel_interval, year_span):
                     contract_positive.add(key)
                     positive_sources[key].extend(_source_ids(row, period_row))

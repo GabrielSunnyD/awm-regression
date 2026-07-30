@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 from pathlib import Path
 
 from .sources import (
@@ -34,7 +35,7 @@ def make_parser() -> argparse.ArgumentParser:
         "--raw-dir",
         type=Path,
         default=Path("data/raw"),
-        help="Destination for the six normalized CSVs.",
+        help="Destination for normalized evidence and crosswalk CSVs.",
     )
     parser.add_argument(
         "--refresh",
@@ -47,6 +48,24 @@ def make_parser() -> argparse.ArgumentParser:
         help=(
             "Registry source_id for the harmonized GKZ reference vintage "
             "(default: statistik_austria_municipalities_2024)."
+        ),
+    )
+    parser.add_argument(
+        "--municipality-changes-source-id",
+        default="statistik_austria_admin_changes",
+        help=(
+            "Registry source_id for Statistics Austria's historical GKZ "
+            "changes (default: statistik_austria_admin_changes)."
+        ),
+    )
+    parser.add_argument(
+        "--municipality-reference-date",
+        type=date.fromisoformat,
+        default=date(2024, 1, 1),
+        metavar="YYYY-MM-DD",
+        help=(
+            "Validity date of the selected municipality universe "
+            "(default: 2024-01-01)."
         ),
     )
     return parser
@@ -74,10 +93,16 @@ def main(argv: list[str] | None = None) -> int:
                 args.sources_dir,
                 args.raw_dir,
                 municipality_source_id=args.municipality_source_id,
+                municipality_changes_source_id=(
+                    args.municipality_changes_source_id
+                ),
+                municipality_reference_date=args.municipality_reference_date,
             )
             print(
                 f"Raw inputs: {summary.municipalities} municipalities and "
-                f"{summary.evidence_rows} evidence rows written to {summary.raw_dir}"
+                f"{summary.crosswalk_rows} historical crosswalk rows; "
+                f"{summary.evidence_rows} evidence rows written to "
+                f"{summary.raw_dir}"
             )
     except SourceDataError as exc:
         parser.error(str(exc))

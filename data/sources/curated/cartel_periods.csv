@@ -1,4 +1,7 @@
-participant_id,participant_name,cartel_start,cartel_end,source_id,source_url,notes
-fcc_austria,FCC Austria Abfall Service AG,2002-07,2021-03,edikt_fcc_27kt1_24k,,"Court finding: direct participation from at least July 2002 through March 2021."
-huber_group,"Huber Entsorgungsgesellschaft m.b.H. Nfg. KG; Huber Abfallservice Verwaltungsgesellschaft m.b.H.",2003,2021-03,edikt_huber_28kt1_25v,,"Court finding: participation in Carinthia from at least 2003 through March 2021."
-
+participant_id,participant_name,cartel_start,cartel_end,legal_status,eligible_for_exposure,gkz_prefixes,source_id,source_url,notes
+fcc_austria,FCC Austria Abfall Service AG,2002-07,2021-03,final,1,1|2|3|4|5|6|7,edikt_fcc_27kt1_24k,,"Final court finding: direct participation from at least July 2002 through March 2021; documented project activity in Burgenland, Carinthia, Lower Austria, Upper Austria, Salzburg, Styria, and Tirol."
+huber_group,"Huber Entsorgungsgesellschaft m.b.H. Nfg. KG; Huber Abfallservice Verwaltungsgesellschaft m.b.H.",2003,2021-03,final,1,2,edikt_huber_28kt1_25v,,"Final court finding: participation in Carinthia from at least 2003 through March 2021."
+saubermacher_group,"Saubermacher Dienstleistungs AG; Trügler Recycling und Transport GesmbH; pink robin gmbh",2002-07,2021-03,final,1,,bwb_saubermacher_final_2025,,"Final decision: participation in the nationwide single and continuous infringement from July 2002 through March 2021."
+killer_group,"Killer GmbH & Co KG; Killer GmbH",2002-07,2021-03,final,1,3|4|7,bwb_killer_final_2026,,"Final decision: participation from July 2002 through March 2021 in Lower Austria and Upper Austria, with isolated Tirol projects."
+kab_kaernten,KAB Kärntner Abfallbewirtschaftung GmbH,2011-03,2021-03,final,1,2,bwb_kab_final_2026,,"Final decision: participation from March 2011 through March 2021, especially in Carinthia."
+energie_ag_umweltservice,Energie AG Oberösterreich Umwelt Service GmbH,2002-07,2021-03,pending_admitted,0,2|3|4|5|6|7|9,bwb_energie_ag_pending_2026,,"BWB application and company admission concern July 2002 through March 2021; ineligible by default because the court proceeding is pending."

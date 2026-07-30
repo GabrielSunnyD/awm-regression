@@ -4,7 +4,9 @@ This directory is the reproducible evidence layer:
 
 - `registry.csv` lists every official source URL and stable `source_id`;
 - `curated/` contains narrow, reviewed propositions extracted from those
-  sources;
+  sources plus participant aliases and contract review status;
+- `review/` records accepted, pending, or excluded dispositions for ambiguous
+  source entries;
 - `downloads/` is created by `uv run awm-sources download` and stores exact
   snapshots;
 - `download_manifest.json` records access times, byte sizes, and SHA-256
@@ -34,6 +36,11 @@ To add evidence:
 4. validate, rebuild, and inspect the municipality-year audit.
 
 Direct evidence must be dated. Current association membership is not projected
-into an earlier cartel year, and a tender notice is not treated as an awarded
-contract unless the source identifies the contracting municipality, supplier,
-and a defensible performance interval.
+into an earlier cartel year. A participant must be final and regionally
+eligible. A tender or generated TED match is not a contract: only a manually
+accepted row with municipality, supplier, performance interval, reviewer, and
+review date enters the normalized data.
+
+Statistics Austria's administrative-change ZIP is parsed automatically.
+Deterministic historical GKZ chains resolve to 2024; splits require explicit
+researcher selection.

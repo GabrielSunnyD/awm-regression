@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 from pathlib import Path
 
 from .pipeline import (
@@ -48,6 +49,18 @@ def make_parser() -> argparse.ArgumentParser:
         "--municipality-source-id",
         default="statistik_austria_municipalities_2024",
         help="Registry source_id for the harmonized GKZ reference vintage.",
+    )
+    parser.add_argument(
+        "--municipality-changes-source-id",
+        default="statistik_austria_admin_changes",
+        help="Registry source_id for Statistics Austria's historical GKZ changes.",
+    )
+    parser.add_argument(
+        "--municipality-reference-date",
+        type=date.fromisoformat,
+        default=date(2024, 1, 1),
+        metavar="YYYY-MM-DD",
+        help="Validity date of the municipality universe (default: 2024-01-01).",
     )
     parser.add_argument(
         "--start-year",
@@ -110,9 +123,12 @@ def main(argv: list[str] | None = None) -> int:
             args.sources_dir,
             args.raw_dir,
             municipality_source_id=args.municipality_source_id,
+            municipality_changes_source_id=args.municipality_changes_source_id,
+            municipality_reference_date=args.municipality_reference_date,
         )
         print(
             f"Raw inputs: {raw.municipalities} municipalities and "
+            f"{raw.crosswalk_rows} historical crosswalk rows; "
             f"{raw.evidence_rows} evidence rows written to {raw.raw_dir}"
         )
 

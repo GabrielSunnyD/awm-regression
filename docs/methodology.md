@@ -2,180 +2,229 @@
 
 ## Unit and target
 
-The main output is a balanced municipality-year panel. Its default domain is:
+The default output is the balanced domain:
 
 \[
-\mathcal{I}_{2024} \times \{2001,\ldots,2024\},
+\mathcal{I}_{2024}\times\{2001,\ldots,2024\},
 \]
 
-where \(\mathcal{I}_{2024}\) is the set of GKZ values in Statistics Austria's
-municipality universe on 2024-01-01.
+where \(\mathcal{I}_{2024}\) is Statistics Austria's municipality universe on
+2024-01-01.
 
-For municipality \(i\) and calendar year \(t\), the binary classification is:
+For 2024-geography municipality \(i\) and calendar year \(t\):
 
 \[
-E_{it} = \max(D_{it}, C_{it}, A_{it}),
+E_{it}=\max(D_{it},C_{it},A_{it}),
 \]
 
 where:
 
-- \(D_{it}=1\) when affirmative direct municipal evidence overlaps year \(t\);
-- \(C_{it}=1\) when a verified contract for \(i\), the same supplier's
-  court-supported cartel interval, and year \(t\) have a common date;
-- \(A_{it}=1\) when membership of \(i\) in an association, an affirmative
-  exposure interval for that association, and year \(t\) have a common date.
+- \(D_{it}\) is dated direct municipality evidence;
+- \(C_{it}\) is an accepted municipality contract intersecting an eligible
+  final participant period in a supported region; and
+- \(A_{it}\) is dated association exposure intersecting dated membership.
 
-This is an annual classification, not an ever-exposed indicator. Evidence in
-one year does not change another year.
+This is an evidence classification, not an estimate of damages or cartel
+intensity.
 
-## Date and overlap rules
+## Date and overlap rule
 
-All intervals are inclusive. Input dates may use:
+All intervals are inclusive. Inputs may use:
 
 - `YYYY-MM-DD`;
-- `YYYY-MM`, interpreted as the first day for a start and the last day for an
-  end; or
-- `YYYY`, interpreted as January 1 for a start and December 31 for an end.
+- `YYYY-MM`, expanded to the first/last day of that month; or
+- `YYYY`, expanded to January 1/December 31.
 
-A blank start or end creates an interval open in that direction. Both
-boundaries cannot be blank because undated evidence cannot support a
-municipality-year classification.
+One blank boundary means open-ended. Both boundaries cannot be blank.
 
-A rule applies to a year if all intervals required by that rule share at least
-one actual day with the calendar year. Merely occurring somewhere in the same
-year is insufficient. For example, a cartel period ending on March 31 and a
-contract starting on April 1 do not produce exposure in that year.
+A rule is positive only when every required interval shares at least one
+actual day with the calendar year:
 
-Any positive within-year overlap produces the simple binary value `1`; the
-pipeline does not prorate partial years. If a downstream model needs an
-exposure fraction, such as months or days exposed, that should be constructed
-as a separate variable rather than changing this indicator.
+\[
+\max(s_1,\ldots,s_k,\text{Jan 1}_t)
+\le
+\min(e_1,\ldots,e_k,\text{Dec 31}_t).
+\]
 
-## Direct evidence
+Thus a cartel period ending March 31 and contract starting April 1 do not
+overlap even though both occur in the same year. Any positive within-year
+overlap produces `1`; the annual indicator is not prorated.
 
-Every direct evidence row includes an `exposure_start` and `exposure_end`. A
-court table that documents conduct in 2016 therefore supports 2016 only. When a
-source lists non-contiguous years, the curated table uses separate rows so the
-gap is not treated as covered.
+## Direct rule
 
-An explicit direct zero sets coverage for its interval but does not override a
-positive rule from another source.
+\(D_{it}=1\) when an affirmative direct-evidence interval for municipality
+\(i\) overlaps year \(t\). A table entry for 2016 supports 2016 only.
+Non-contiguous years are separate rows.
+
+The FCC extraction inventory distinguishes:
+
+- accepted municipality or association projects;
+- unresolved district, facility, or service-scope entries; and
+- excluded private-customer or out-of-scope wastewater entries.
+
+The court's project list is treated as documented examples, not an exhaustive
+victim register. Absence from the table is unknown, not direct evidence of
+zero exposure.
+
+An explicit direct negative row can set `data_found=true`, but cannot override
+a positive contract or association rule in the same municipality-year.
 
 ## Contract rule
 
-A contract is positive only when these three intervals have a common date:
+\(C_{it}=1\) only if all of the following are true:
 
-1. the municipality–supplier contract;
-2. a legally supported infringement period for the same `participant_id`;
-3. the calendar year.
+1. a contract row passed manual review and has `review_status=accepted`;
+2. the contract identifies municipality \(i\), a stable `participant_id`, and
+   a supported performance interval;
+3. a participant-period row for the same ID is `final`;
+4. that period has `eligible_for_exposure=true`;
+5. the municipality's Austrian state prefix is in the period's supported
+   `gkz_prefixes`, unless the scope is blank/nationwide; and
+6. contract, participant period, and year \(t\) share a day.
 
-The participant roster is deliberately narrow and participant-specific.
-Industry-wide cartel dates are not assigned to a firm unless a decision or
-similarly authoritative source supports that firm's period.
+Publication date, award date, and performance period are not interchangeable.
+The treatment interval follows supported service performance dates.
 
-A verified contract sets `data_found=true` in every year it covers even when
-the supplier has no matching cartel period. A participant-period row by itself
-does not provide municipality-level coverage.
+The default final roster is:
+
+- FCC Austria Abfall Service AG;
+- the two Huber entities;
+- Saubermacher, Trügler, and pink robin as one decision group;
+- the Killer entities; and
+- KAB Kärntner Abfallbewirtschaftung GmbH.
+
+Energie AG OÖ Umwelt Service is recorded as `pending_admitted` but ineligible.
+Its TED notices may appear in the candidate queue; they cannot create exposure.
+
+A verified contract sets `data_found=true` during its performance interval even
+if no eligible participant period overlaps. A participant finding by itself
+does not create municipality-level coverage.
+
+## TED candidate rule
+
+TED ingestion is intentionally upstream of treatment. The API query finds
+Austrian waste-service notices and performs deterministic alias matching on
+reported winner names. Every output row begins as `pending`.
+
+The following are not sufficient for acceptance:
+
+- a participant name anywhere in a notice;
+- an association or federal buyer without a specific municipal customer;
+- a tender notice without an award;
+- an award without supported performance dates; or
+- a place of performance that merely contains a municipality name.
+
+Only a manually accepted, source-registered curated contract can enter the
+normalized contract table. This separation prevents an API refresh or a false
+name match from changing exposure.
 
 ## Association rule
 
-An association rule requires a common date among:
+\(A_{it}=1\) only when:
 
-1. the municipality's membership interval;
-2. an evaluated exposure interval for that association;
-3. the calendar year.
+1. municipality \(i\)'s membership interval;
+2. an affirmative exposure interval for the same `association_id`; and
+3. calendar year \(t\)
 
-Current membership is never projected backward. An association finding also is
-not propagated to municipalities for which no dated membership record exists.
-An evaluated negative association interval can support `data_found=true` and
-`exposure=0` for overlapping member-years.
+share at least one day.
+
+Current membership is never projected backward. GABL and AWS membership is
+propagated because RIS law establishes founding dates and later accessions
+before the relevant FCC projects. GVA Mödling is propagated only for
+municipalities whose entry date is stated in its official history.
+
+An association exposure does not automatically apply to an entire district,
+to municipalities merely served by a facility, or to current members with no
+historical support.
 
 ## `data_found`
 
-`data_found` records evidence coverage for a specific GKZ-year, not treatment:
+Coverage is calculated separately for each GKZ-year:
 
-- a direct row sets it for the years that row covers;
-- a contract row sets it for the years the contract covers;
-- an association membership sets it only for years in which it overlaps at
-  least one evaluated row for that association.
-
-Therefore:
+- direct evidence sets coverage for its supported interval;
+- an accepted contract sets coverage for its performance interval, regardless
+  of whether the participant gate is positive; and
+- association evidence sets coverage only where a dated membership and an
+  evaluated association interval overlap.
 
 | exposure | data_found | Interpretation |
 |---:|:---:|---|
-| 1 | true | At least one annual exposure rule is positive |
+| 1 | true | At least one rule is positive |
 | 0 | true | Evidence covers the year but no positive rule is met |
-| 0 | false | No coded evidence covers the municipality-year; zero is a default |
-| 1 | false | Impossible by construction |
+| 0 | false | No coded evidence covers the row; zero is a default |
+| 1 | false | Prohibited by construction |
 
-Default zeroes should normally be treated as unknown coverage, not clean
-controls.
+Positive evidence wins across channels. The audit preserves rule flags, source
+IDs, and evaluated row counts.
 
-## Conflict and precedence
+The present build has 130 exposed rows and 130 rows with data. In other words,
+it does not yet contain evidence-supported control rows; every current
+`data_found=true` row is positive. Restricting a regression to
+`data_found=true` is therefore not presently estimable and should not be
+presented as a robustness design until contract or negative-coverage research
+adds supported zeroes.
 
-Positive evidence wins within a municipality-year. A zero in one source does
-not erase a positive direct, contract, or association rule. The audit table
-preserves:
+## Territorial harmonization
 
-- each rule-specific positive flag;
-- the positive source IDs;
-- direct and contract row counts for the year; and
-- the number of evaluated association membership/exposure pairs.
+The output uses fixed 2024 geography. Statistics Austria's administrative-
+change archive maps changed codes since 2002 into that universe.
 
-This permits sensitivity analyses that use only one evidence channel or review
-conflicting records.
+For a deterministic predecessor-to-successor chain, evidence is assigned to
+the 2024 successor. When multiple predecessors merge, the 2024 unit is
+positive if any mapped predecessor is positive; this is a maximum aggregation
+rule and does not imply that the whole current territory was exposed.
 
-## Territorial consistency
+A one-to-many historical split is not assigned automatically. The crosswalk
+retains all successors as `split_requires_review`, and normalization fails
+until the researcher identifies the relevant 2024 target. This avoids copying
+one historical project to every successor.
 
-The default panel is balanced on the 2024 municipality universe. The fixed
-geography makes row completeness transparent and supports merges to fiscal or
-demographic data already harmonized to 2024 boundaries.
+The crosswalk is a harmonization device, not an annual-boundary reconstruction.
+It does not make every 2024 unit historically existent, and it does not supply
+pre-2002 changes. Analyses on contemporaneous municipality boundaries require
+annual universes and a different panel design.
 
-It does not imply that all 2024 units existed unchanged from 2001 onward.
-Evidence using an obsolete or predecessor GKZ must be explicitly crosswalked
-to the 2024 analysis unit before curation. The pipeline rejects evidence GKZ
-values outside the selected universe rather than guessing a merger mapping.
+## Identification cautions
 
-A contemporaneous-boundary design would require annual municipality universes,
-validity intervals, and a complete merger/split crosswalk. It would no longer
-be the balanced fixed-geography panel produced here.
+The classification alone is not a causal treatment design:
 
-## Identification warning
+- published case material is selective and non-exhaustive;
+- procurement availability and manual review are non-random;
+- a cartel-period supplier relationship may itself reflect customer
+  allocation;
+- association propagation can make many municipalities share the same event;
+- default zeroes are mostly unresearched, not confirmed unexposed;
+- fixed-geography merger aggregation can dilute a predecessor-level event; and
+- annual binary overlap ignores value, volume, service share, and duration.
 
-This variable is a reproducible evidence classification, not by itself a causal
-identification strategy. In particular:
+Recommended research progression:
 
-- observed cartel-period contracts may be endogenous to customer allocation or
-  bid rigging;
-- published court project lists are examples and need not enumerate every
-  affected municipality;
-- `data_found=false` is non-random because procurement and association records
-  are fragmented;
-- a binary annual overlap does not measure affected contract value, waste
-  volume, service share, or cartel intensity.
+1. expand accepted pre-2021 municipality contracts and document performance
+   intervals;
+2. create an explicit coverage denominator, including reviewed tenders or
+   municipalities where a different supplier is confirmed;
+3. report direct, contract, and association channels separately;
+4. use genuinely predetermined supplier relationships where possible;
+5. analyze the first genuine post-cartel competitive retender at the
+   contract/tender level;
+6. cluster or otherwise account for association-level common shocks; and
+7. keep exposure construction independent of post-2021 outcomes.
 
-For causal work, consider:
+The main panel can be used immediately for descriptive mapping and source
+auditing. A causal municipal regression should wait for broader procurement
+coverage or use a design that does not treat `data_found=false` as a verified
+clean control.
 
-- restricting the main specification to `data_found=true` and separately
-  reporting the loss of coverage;
-- treating `data_found=false` observations as unknown rather than confirmed
-  zeroes;
-- direct-evidence-only, contract-only, and association-only robustness
-  definitions;
-- predetermined exposure based on genuinely pre-cartel relationships;
-- contract- or tender-level analysis around the first post-cartel competitive
-  retendering; and
-- keeping the exposure panel separate from any post-2021 outcome used in the
-  regression.
+## Current release
 
-## Present coverage
+The current default build contains:
 
-The initial curated release contains dated municipal and association projects
-from the published FCC decision, participant-specific infringement periods for
-FCC and the Huber entities, and GVA Mödling memberships only where the official
-history gives an entry date. It has no verified municipality–supplier contract
-rows yet.
+- 2,093 fixed-2024 GKZ units;
+- 24 years and 50,232 unique panel keys;
+- 650 historical crosswalk rows;
+- 77 normalized evidence rows;
+- 130 exposed municipality-years;
+- 130 rows with `data_found=true`; and
+- zero accepted municipality-contract rows.
 
-The current default build contains 50,232 rows, 23 exposed
-municipality-years, and 23 rows with `data_found=true`. Those counts describe
-the present source coding, not the true geographic reach of the cartel.
+These counts measure documented coding coverage, not the cartel's true reach.

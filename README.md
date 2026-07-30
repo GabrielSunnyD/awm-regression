@@ -1,31 +1,28 @@
 # Austrian waste-cartel municipality-year exposure
 
-This project builds a simple, auditable exposure panel for Austrian
-municipalities:
+This project builds an auditable Austrian municipality-year panel:
 
 ```text
 gkz,year,exposure,data_found
 ```
 
-The default output is a balanced panel of every municipality in Statistics
-Austria's 2024 GKZ universe for every year from 2001 through 2024. The current
-official universe has 2,093 municipalities, so the output contains 50,232 rows.
-GKZ (*Gemeindekennziffer*) is the official abbreviation.
+The default output crosses every municipality in Statistics Austria's
+2024-01-01 GKZ universe with 2001–2024: 2,093 municipalities × 24 years =
+50,232 rows.
 
-`exposure=1` for municipality \(i\) in year \(t\) when at least one reviewed
-source supports one of these rules during that year:
+For municipality \(i\) and year \(t\), `exposure=1` when at least one reviewed
+source supports:
 
-1. direct municipality evidence overlaps year \(t\);
-2. a verified municipality contract, the same participant's court-supported
-   cartel period, and year \(t\) share at least one day; or
-3. a municipality's association-membership interval, a reviewed affirmative
-   association-exposure interval, and year \(t\) share at least one day.
+1. direct municipality evidence overlapping \(t\);
+2. an accepted municipality–supplier contract overlapping both \(t\) and that
+   participant's eligible final infringement period; or
+3. dated association membership overlapping both \(t\) and a reviewed
+   association-exposure interval.
 
-Exposure is not carried forward from another year. A municipality documented
-in one project year is positive in that year only unless another dated record
-supports additional years.
+All interval tests require at least one shared calendar day. Exposure is never
+carried into another year merely because a municipality was exposed once.
 
-## Reproduce the panel
+## Build the panel
 
 Install [`uv`](https://docs.astral.sh/uv/), clone the repository, and run:
 
@@ -34,39 +31,24 @@ uv sync --locked
 uv run awm-build
 ```
 
-`awm-build` performs the entire workflow:
+`awm-build` downloads or reuses registered official snapshots, validates the
+source layer, constructs the historical-GKZ crosswalk and normalized inputs,
+then builds:
 
-1. download or reuse official source snapshots;
-2. verify cached bytes against the SHA-256 manifest;
-3. normalize reviewed evidence into `data/raw`;
-4. build the 2001–2024 panel and audit table in `data/processed`.
+- `data/processed/municipality_year_exposure.csv`;
+- `data/processed/municipality_year_exposure_audit.csv`.
 
-Use the existing verified snapshots without network requests:
+Useful variants are:
 
 ```bash
 uv run awm-build --offline
-```
-
-Replace snapshots only when an intentional source refresh is needed:
-
-```bash
 uv run awm-build --refresh
-```
-
-The generated outputs are:
-
-- `data/processed/municipality_year_exposure.csv` — simple analysis panel;
-- `data/processed/municipality_year_exposure_audit.csv` — municipality name,
-  rule flags, row counts, and positive source IDs for every GKZ-year.
-
-Pass `--omit-data-found` for a three-column main output or `--no-audit` to skip
-the detailed table. The year range is configurable:
-
-```bash
 uv run awm-exposure --start-year 2001 --end-year 2024
 ```
 
-The source stages can also be run independently:
+`--offline` requires an existing checksum-verified cache. `--refresh`
+intentionally replaces every registered snapshot. The stages can be inspected
+separately:
 
 ```bash
 uv run awm-sources download
@@ -75,88 +57,126 @@ uv run awm-sources build
 uv run awm-exposure
 ```
 
-## Evidence architecture
+## Find procurement candidates
 
-The project keeps evidence acquisition, reviewed coding, normalized inputs, and
-classification separate:
+TED discovery is a separate, review-only workflow:
+
+```bash
+uv run awm-ted
+```
+
+It queries the unauthenticated TED Search API for Austrian waste-service
+notices, matches reported winners against source-backed participant aliases,
+and writes `data/review/procurement_candidates.csv`. Every generated row is
+`pending`; it cannot change exposure.
+
+To accept a candidate, a researcher must verify the municipal buyer, award,
+service relevance, supplier, and performance dates; register and download the
+underlying notice; and add an `accepted` row with reviewer and review date to
+`data/sources/curated/contracts.csv`. Pending and rejected rows are excluded
+from `data/raw/contracts.csv` by construction.
+
+## Evidence architecture
 
 | Layer | Role |
 |---|---|
-| `data/sources/registry.csv` | Official URLs and stable citation IDs |
+| `data/sources/registry.csv` | Official URLs and stable source IDs |
 | `data/sources/downloads/` | Cached source snapshots |
-| `data/sources/download_manifest.json` | Access times, byte sizes, and SHA-256 checksums |
-| `data/sources/curated/*.csv` | Narrow propositions reviewed by a researcher |
-| `data/raw/*.csv` | Generated, GKZ-normalized inputs |
+| `data/sources/download_manifest.json` | Access time, byte size, and SHA-256 |
+| `data/sources/curated/*.csv` | Reviewed propositions and participant aliases |
+| `data/sources/review/*.csv` | Decisions about ambiguous court-table entries |
+| `data/review/` | Generated procurement candidates awaiting review |
+| `data/raw/*.csv` | Generated, normalized classifier inputs and crosswalk |
 | `data/processed/*.csv` | Final panel and rule-level audit |
 
-The six classifier inputs are:
+The generated normalized tables are:
 
 | File | Role |
 |---|---|
-| `municipalities.csv` | Harmonized 2024 GKZ universe |
-| `direct_evidence.csv` | Dated municipality-level positive or negative findings |
-| `cartel_periods.csv` | Participant-specific infringement intervals |
-| `contracts.csv` | Verified municipality–supplier contract intervals |
-| `association_exposure.csv` | Dated association-level findings |
+| `municipalities.csv` | Fixed 2024 GKZ universe |
+| `municipality_crosswalk.csv` | Official historical-to-2024 GKZ mappings |
+| `direct_evidence.csv` | Dated municipality findings |
+| `cartel_periods.csv` | Participant period, legal status, eligibility, and region |
+| `contracts.csv` | Manually accepted municipality–supplier contracts |
+| `association_exposure.csv` | Dated association findings |
 | `association_memberships.csv` | Dated municipal membership intervals |
 
-Statistics Austria's 2024 WFS SHAPE-ZIP supplies the municipality universe. The
-parser reads the official identifiers and names, ignores geometry, and
-collapses Vienna's 23 district geometries to municipality GKZ `90001`.
+The source parser uses exact municipality names and stable participant or
+association IDs. It never labels every place-name hit in a legal document:
+addresses, private customers, facilities, districts, and comparison locations
+are not automatically municipality exposure.
 
-Court documents are not classified with unrestricted place-name matching. A
-legal decision may contain company addresses, comparison locations, or
-anonymized entities that are not evidence that a municipality was affected.
-Reviewed rows therefore retain an exact source ID, supported date interval, and
-coding note. Municipality names are resolved by exact match; firm and
-association joins use stable researcher-created IDs.
+## Legal-status and territorial safeguards
 
-## `data_found` and unknown coverage
+The default participant roster includes the finalized FCC, Huber,
+Saubermacher/Trügler/pink robin, Killer, and KAB findings. Energie AG
+Oberösterreich Umwelt Service is recorded as `pending_admitted` but
+`eligible_for_exposure=0`; it cannot trigger treatment unless methodology and
+source coding are deliberately changed after a final disposition.
 
-`data_found` is calculated separately for each municipality-year:
+Participant periods also retain supported Austrian state prefixes. A contract
+outside a participant's coded geographic scope does not trigger the contract
+rule. A contract still sets `data_found=true` for its performance years,
+because the municipality-year was evaluated.
+
+The FCC project-table review inventory records every municipality- or
+association-like entry considered during extraction as `accepted`, `pending`,
+or `excluded`. Broad district references, private customers, wastewater, and
+facilities with unresolved service scope remain outside treatment.
+
+## `data_found` and current coverage
+
+`data_found` is municipality-year specific:
 
 | exposure | data_found | Interpretation |
 |---:|:---:|---|
-| 1 | true | At least one dated rule supports exposure in that year |
-| 0 | true | Relevant evidence covers that year but no positive rule is met |
-| 0 | false | No coded evidence covers that municipality-year; zero is a default |
+| 1 | true | At least one annual rule is positive |
+| 0 | true | Evidence covers the year but no positive rule is met |
+| 0 | false | No coded evidence covers the municipality-year; zero is a default |
 | 1 | false | Impossible by construction |
 
-Most current zeroes are the third category and must not be interpreted as proof
-of no exposure. Public court project lists are not exhaustive, historical
-procurement data remain fragmented, and `contracts.csv` is intentionally empty
-until municipality–supplier awards and performance intervals can be verified.
+Default zeroes are unknown coverage, not confirmed clean controls. Public court
+project lists are illustrative rather than exhaustive.
 
-With the currently curated evidence, the default build has 23 exposed
-municipality-years and 23 municipality-years with `data_found=true`. These
-figures describe current coding coverage, not the true size of the cartel.
+The current official-source build contains:
+
+- 50,232 balanced panel rows;
+- 650 historical crosswalk rows;
+- 77 normalized evidence rows;
+- 130 exposed municipality-years; and
+- 130 municipality-years with `data_found=true`.
+
+The expansion is driven mainly by dated legal membership records for all 19
+GABL and 15 AWS Schwechat members at the corresponding FCC project years.
+`contracts.csv` remains empty because no procurement candidate has yet passed
+manual acceptance.
 
 ## Territorial interpretation
 
-The balanced panel uses one harmonized territorial vintage: the set of GKZ
-values valid on 2024-01-01. It does not claim that every 2024 municipality
-existed under the same code in every earlier year. Historical evidence for a
-predecessor municipality must be deliberately crosswalked to the chosen 2024
-unit before it is curated; unknown or obsolete GKZ values cause a hard error.
+The output remains a fixed-2024-geography panel. Statistics Austria's
+machine-readable administrative-change archive now resolves deterministic
+renumbering and merger chains since 2002 automatically. A genuine one-to-many
+split is written as `split_requires_review` and causes evidence normalization
+to fail until the researcher supplies the intended 2024 successor.
 
-This fixed geography is useful for merging with a regression panel already
-harmonized to 2024 boundaries. A contemporaneous-boundary panel would be a
-different estimand and would require annual historical universes and explicit
-merger crosswalks.
+This crosswalk improves source resolution; it does not claim that every 2024
+municipality existed unchanged in every earlier year. A contemporaneous-
+boundary panel is a different estimand requiring annual universes and explicit
+allocation rules for split municipalities.
 
-## Testing
-
-Run:
+## Test
 
 ```bash
+uv lock --check
+uv run python -m compileall -q src scripts
 uv run python -m unittest discover -s tests -v
 ```
 
-Tests cover annual rule timing, partial-year intersections, balanced-panel
-completeness, unknown years, malformed values, stale GKZ rejection, exact
-municipality matching, Vienna normalization, source-cache checksums, download
-refresh behavior, and the source-to-panel path.
+Tests cover the balanced panel, day-level interval intersection, all three
+exposure paths, legal-status and geographic gates, source checksums, exact
+municipality resolution, automatic historical chains, split rejection,
+contract-review gating, and paginated TED candidate generation.
 
-See [`docs/data_sources.md`](docs/data_sources.md) for collection and ingestion
-details and [`docs/methodology.md`](docs/methodology.md) for the classification
-rules and identification cautions.
+See [`docs/data_sources.md`](docs/data_sources.md) for the ingestion runbook and
+[`docs/methodology.md`](docs/methodology.md) for the classification and
+identification choices.
