@@ -113,24 +113,31 @@ class SourcePipelineTests(unittest.TestCase):
         filename: str = "downloads/municipalities.zip",
         *,
         include_changes: bool = False,
+        include_citation_only: bool = False,
     ) -> None:
         rows = [
             {
                 "source_id": "municipalities",
                 "source_url": "https://example.test/municipalities.zip",
                 "filename": filename,
+                "acquisition_method": "download",
+                "supporting_snapshot_id": "",
                 "description": "Municipality test fixture",
             },
             {
                 "source_id": "court",
                 "source_url": "https://example.test/court.html",
                 "filename": "downloads/court.html",
+                "acquisition_method": "download",
+                "supporting_snapshot_id": "",
                 "description": "Court test fixture",
             },
             {
                 "source_id": "members",
                 "source_url": "https://example.test/members.html",
                 "filename": "downloads/members.html",
+                "acquisition_method": "download",
+                "supporting_snapshot_id": "",
                 "description": "Membership test fixture",
             },
         ]
@@ -140,12 +147,32 @@ class SourcePipelineTests(unittest.TestCase):
                     "source_id": "changes",
                     "source_url": "https://example.test/changes.zip",
                     "filename": "downloads/changes.zip",
+                    "acquisition_method": "download",
+                    "supporting_snapshot_id": "",
                     "description": "Administrative changes fixture",
+                }
+            )
+        if include_citation_only:
+            rows.append(
+                {
+                    "source_id": "challenge_notice",
+                    "source_url": "https://example.test/challenge.html",
+                    "filename": "",
+                    "acquisition_method": "citation_only",
+                    "supporting_snapshot_id": "court",
+                    "description": "Browser-reviewed citation fixture",
                 }
             )
         write_csv(
             self.sources / "registry.csv",
-            ["source_id", "source_url", "filename", "description"],
+            [
+                "source_id",
+                "source_url",
+                "filename",
+                "acquisition_method",
+                "supporting_snapshot_id",
+                "description",
+            ],
             rows,
         )
 
@@ -393,6 +420,7 @@ class SourcePipelineTests(unittest.TestCase):
         self.assertEqual((first.downloaded, first.cached), (3, 0))
         self.assertEqual((second.downloaded, second.cached), (0, 3))
         self.assertEqual((third.downloaded, third.cached), (3, 0))
+        self.assertEqual(first.citation_only, 0)
         self.assertEqual(len(calls), 6)
         manifest = json.loads(
             (self.sources / "download_manifest.json").read_text(encoding="utf-8")
@@ -401,15 +429,77 @@ class SourcePipelineTests(unittest.TestCase):
         self.assertTrue(
             all(len(source["sha256"]) == 64 for source in manifest["sources"])
         )
+        self.assertTrue(
+            all(
+                source["acquisition_method"] == "download"
+                for source in manifest["sources"]
+            )
+        )
         self.write_curated()
         validation = validate_sources(self.sources)
         self.assertEqual(validation.registered_sources, 3)
         self.assertEqual(validation.verified_downloads, 3)
+        self.assertEqual(validation.citation_only_sources, 0)
 
         (self.sources / "downloads/court.html").write_text(
             "<html>tampered</html>", encoding="utf-8"
         )
         with self.assertRaisesRegex(SourceDataError, "(size|checksum) changed"):
+            validate_sources(self.sources)
+
+    def test_citation_only_sources_are_skipped_but_remain_valid_citations(
+        self,
+    ) -> None:
+        self.write_registry(include_citation_only=True)
+        self.write_curated()
+        direct = read_csv(self.curated / "direct_evidence.csv")
+        direct[0]["source_id"] = "challenge_notice"
+        write_csv(
+            self.curated / "direct_evidence.csv",
+            list(direct[0]),
+            direct,
+        )
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            if request.url.path.endswith("challenge.html"):
+                self.fail("citation-only URL must not be requested")
+            if request.url.path.endswith(".zip"):
+                content = b"PK\x03\x04source bytes"
+            else:
+                content = b"<!doctype html><html><body>source bytes</body></html>"
+            return httpx.Response(200, request=request, content=content)
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            summary = download_sources(self.sources, client=client)
+
+        self.assertEqual(
+            (summary.downloaded, summary.cached, summary.citation_only),
+            (3, 0, 1),
+        )
+        self.assertEqual(len(calls), 3)
+        manifest = json.loads(
+            (self.sources / "download_manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["schema_version"], 2)
+        self.assertNotIn(
+            "challenge_notice",
+            {source["source_id"] for source in manifest["sources"]},
+        )
+        validation = validate_sources(self.sources)
+        self.assertEqual(validation.registered_sources, 4)
+        self.assertEqual(validation.verified_downloads, 3)
+        self.assertEqual(validation.citation_only_sources, 1)
+
+        registry = read_csv(self.sources / "registry.csv")
+        registry[-1]["supporting_snapshot_id"] = "missing"
+        write_csv(
+            self.sources / "registry.csv",
+            list(registry[0]),
+            registry,
+        )
+        with self.assertRaisesRegex(SourceDataError, "unknown supporting_snapshot_id"):
             validate_sources(self.sources)
 
     def test_registry_rejects_path_traversal(self) -> None:

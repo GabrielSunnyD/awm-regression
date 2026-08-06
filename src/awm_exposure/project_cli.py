@@ -110,12 +110,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(
                 f"Sources: {downloads.downloaded} downloaded, "
-                f"{downloads.cached} reused; manifest: {downloads.manifest_path}"
+                f"{downloads.cached} reused, "
+                f"{downloads.citation_only} citation-only skipped; "
+                f"manifest: {downloads.manifest_path}"
             )
 
         validation = validate_sources(args.sources_dir)
         print(
             f"Validation: {validation.verified_downloads} source snapshots and "
+            f"{validation.citation_only_sources} citation-only sources; "
             f"{validation.curated_rows} curated rows verified."
         )
 

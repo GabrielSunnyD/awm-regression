@@ -31,6 +31,22 @@ where:
 This is an evidence classification, not an estimate of damages or cartel
 intensity.
 
+## Evidence provenance
+
+The source registry distinguishes checksum-verified downloads from
+browser-reviewed citations. Four BWB participant notice pages are currently
+`citation_only` because their Sucuri JavaScript challenge prevents ordinary
+HTTP acquisition. The official June 2026 BWB FAQ remains a verified supporting
+snapshot, while the individual page URLs preserve the finer citations used for
+participant-specific dates and scope.
+
+This distinction affects reproducibility, not the exposure rule: a checksum
+shows which bytes were reviewed but cannot validate the legal interpretation.
+The source log therefore leaves hashes blank for citation-only pages and names
+their supporting snapshot explicitly. Page-specific claims should be manually
+archived before publication or litigation if the official site still blocks
+automated snapshots.
+
 The project also defines \(P_t=1\) for full calendar years beginning in 2022.
 The registered BWB material and participant findings place the end of the
 cartel in March 2021. Because \(E_{it}\) is positive for any supported day in a

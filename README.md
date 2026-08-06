@@ -42,9 +42,9 @@ uv sync --locked
 uv run awm-build
 ```
 
-`awm-build` downloads or reuses registered official snapshots, validates the
-source layer, constructs the historical-GKZ crosswalk and normalized inputs,
-then builds:
+`awm-build` downloads or reuses registered official snapshots, skips URLs
+explicitly marked `citation_only`, validates both acquisition paths, constructs
+the historical-GKZ crosswalk and normalized inputs, then builds:
 
 - `data/processed/municipality_year_exposure.csv`;
 - `data/processed/municipality_year_exposure_wide.csv`; and
@@ -62,9 +62,9 @@ uv run awm-build --refresh
 uv run awm-exposure --start-year 2001 --end-year 2024
 ```
 
-`--offline` requires an existing checksum-verified cache. `--refresh`
-intentionally replaces every registered snapshot. The stages can be inspected
-separately:
+`--offline` requires an existing checksum-verified cache for every `download`
+source. `--refresh` intentionally replaces those snapshots; it never requests
+`citation_only` URLs. The stages can be inspected separately:
 
 ```bash
 uv run awm-sources download
@@ -96,8 +96,8 @@ from `data/raw/contracts.csv` by construction.
 
 | Layer | Role |
 |---|---|
-| `data/sources/registry.csv` | Official URLs and stable source IDs |
-| `data/sources/downloads/` | Cached source snapshots |
+| `data/sources/registry.csv` | Official URLs, stable IDs, and acquisition policy |
+| `data/sources/downloads/` | Cached snapshots for `download` sources |
 | `data/sources/download_manifest.json` | Access time, byte size, and SHA-256 |
 | `data/sources/curated/*.csv` | Reviewed propositions and participant aliases |
 | `data/sources/review/*.csv` | Decisions about ambiguous court-table entries |
@@ -121,6 +121,13 @@ The source parser uses exact municipality names and stable participant or
 association IDs. It never labels every place-name hit in a legal document:
 addresses, private customers, facilities, districts, and comparison locations
 are not automatically municipality exposure.
+
+Four BWB notice pages currently return a Sucuri JavaScript challenge to
+automated clients. They remain registered as browser-reviewed
+`citation_only` sources and point to the downloadable June 2026 BWB FAQ as a
+supporting snapshot. The downloader does not attempt to bypass that challenge.
+Validation verifies the FAQ bytes and the registry relationship, while making
+clear that the notice pages themselves have no local checksum.
 
 ## Legal-status and territorial safeguards
 
@@ -195,8 +202,8 @@ uv run python -m unittest discover -s tests -v
 Tests cover the balanced panel, day-level interval intersection, all three
 exposure paths, legal-status and geographic gates, source checksums, exact
 municipality resolution, automatic historical chains, split rejection,
-contract-review gating, wide-output shape, the post-raid non-exposure
-invariant, and paginated TED candidate generation.
+contract-review gating, citation-only download exclusion, wide-output shape,
+the post-raid non-exposure invariant, and paginated TED candidate generation.
 
 See [`docs/data_sources.md`](docs/data_sources.md) for the ingestion runbook and
 [`docs/methodology.md`](docs/methodology.md) for the classification and

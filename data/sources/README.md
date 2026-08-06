@@ -2,13 +2,14 @@
 
 This directory is the reproducible evidence layer:
 
-- `registry.csv` lists every official source URL and stable `source_id`;
+- `registry.csv` lists every official source URL, stable `source_id`, and
+  acquisition policy;
 - `curated/` contains narrow, reviewed propositions extracted from those
   sources plus participant aliases and contract review status;
 - `review/` records accepted, pending, or excluded dispositions for ambiguous
   source entries;
 - `downloads/` is created by `uv run awm-sources download` and stores exact
-  snapshots;
+  snapshots for registry rows marked `download`;
 - `download_manifest.json` records access times, byte sizes, and SHA-256
   checksums.
 
@@ -27,10 +28,17 @@ uv run awm-exposure
 
 Or run all stages with `uv run awm-build`. Use `awm-build --offline` to require
 the existing verified cache and `--refresh` to intentionally replace snapshots.
+Rows marked `citation_only` are skipped in both normal and refresh builds.
+
+The four BWB participant pages are `citation_only` because automated requests
+receive a Sucuri JavaScript challenge. Their precise URLs remain registered for
+browser review, and each points to the downloadable BWB FAQ as a supporting
+snapshot. Validation never reports those four pages as checksum-verified.
 
 To add evidence:
 
-1. add its official HTTPS URL and a unique `source_id` to `registry.csv`;
+1. add its official HTTPS URL, unique `source_id`, and acquisition fields to
+   `registry.csv` (normally `acquisition_method=download`);
 2. download and read the snapshot;
 3. add only source-supported propositions and intervals to `curated/*.csv`;
 4. validate, rebuild, and inspect the long panel, wide exposure matrix, and
