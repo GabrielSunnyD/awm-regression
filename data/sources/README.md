@@ -33,13 +33,20 @@ To add evidence:
 1. add its official HTTPS URL and a unique `source_id` to `registry.csv`;
 2. download and read the snapshot;
 3. add only source-supported propositions and intervals to `curated/*.csv`;
-4. validate, rebuild, and inspect the municipality-year audit.
+4. validate, rebuild, and inspect the long panel, wide exposure matrix, and
+   municipality-year audit.
 
 Direct evidence must be dated. Current association membership is not projected
 into an earlier cartel year. A participant must be final and regionally
 eligible. A tender or generated TED match is not a contract: only a manually
 accepted row with municipality, supplier, performance interval, reviewer, and
 review date enters the normalized data.
+
+The panel-level post-raid rule is separate from municipality evidence. Since
+the registered BWB and participant findings end the documented cartel in March
+2021, all complete calendar years from 2022 onward are known non-exposed
+periods for every GKZ. The audit records this coverage explicitly; 2021 is not
+treated as a clean annual zero.
 
 Statistics Austria's administrative-change ZIP is parsed automatically.
 Deterministic historical GKZ chains resolve to 2024; splits require explicit

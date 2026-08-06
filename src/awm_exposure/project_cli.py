@@ -24,7 +24,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Download official sources, normalize reviewed evidence, and build "
-            "the municipality-year exposure panel."
+            "the long and wide municipality-year exposure outputs."
         )
     )
     parser.add_argument(
@@ -43,7 +43,7 @@ def make_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
         default=Path("data/processed"),
-        help="Destination for the final panel and audit table.",
+        help="Destination for the long panel, wide matrix, and audit table.",
     )
     parser.add_argument(
         "--municipality-source-id",
@@ -146,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{panel.main_output}; {panel.exposed_rows} exposed rows and "
             f"{panel.with_data_rows} rows with data."
         )
+        print(f"Wide exposure matrix written to {panel.wide_output}.")
     except (InputError, SourceDataError) as exc:
         parser.error(str(exc))
     return 0

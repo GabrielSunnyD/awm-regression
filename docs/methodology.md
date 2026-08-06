@@ -11,6 +11,10 @@ The default output is the balanced domain:
 where \(\mathcal{I}_{2024}\) is Statistics Austria's municipality universe on
 2024-01-01.
 
+The same exposure values are also emitted as a wide convenience matrix with
+one row per GKZ and one column for each panel year. The long file remains the
+canonical analytical output because it retains `data_found`.
+
 For 2024-geography municipality \(i\) and calendar year \(t\):
 
 \[
@@ -26,6 +30,19 @@ where:
 
 This is an evidence classification, not an estimate of damages or cartel
 intensity.
+
+The project also defines \(P_t=1\) for full calendar years beginning in 2022.
+The registered BWB material and participant findings place the end of the
+cartel in March 2021. Because \(E_{it}\) is positive for any supported day in a
+year, 2021 remains a potentially exposed mixed year; 2022 is the first annual
+unit wholly after the raids. The classifier enforces:
+
+\[
+P_t=1 \Longrightarrow E_{it}=0\quad\text{for every }i.
+\]
+
+A positive direct, contract, or association rule in a post-raid year stops the
+build as contradictory evidence rather than being silently overwritten.
 
 ## Date and overlap rule
 
@@ -145,7 +162,9 @@ Coverage is calculated separately for each GKZ-year:
 - an accepted contract sets coverage for its performance interval, regardless
   of whether the participant gate is positive; and
 - association evidence sets coverage only where a dated membership and an
-  evaluated association interval overlap.
+  evaluated association interval overlap; and
+- the project-wide post-raid rule sets coverage for every municipality in each
+  full calendar year from 2022 onward.
 
 | exposure | data_found | Interpretation |
 |---:|:---:|---|
@@ -154,15 +173,18 @@ Coverage is calculated separately for each GKZ-year:
 | 0 | false | No coded evidence covers the row; zero is a default |
 | 1 | false | Prohibited by construction |
 
-Positive evidence wins across channels. The audit preserves rule flags, source
-IDs, and evaluated row counts.
+The audit preserves rule flags, source IDs, evaluated row counts,
+`data_found_reasons`, and an explicit `post_raid_non_exposure` flag. Positive
+evidence wins across the three municipality channels, but a positive after
+2021 is invalid because it contradicts the project-wide non-exposure period.
 
-The present build has 130 exposed rows and 130 rows with data. In other words,
-it does not yet contain evidence-supported control rows; every current
-`data_found=true` row is positive. Restricting a regression to
-`data_found=true` is therefore not presently estimable and should not be
-presented as a robustness design until contract or negative-coverage research
-adds supported zeroes.
+The present build has 130 exposed rows and 6,409 rows with data. Of those,
+6,279 are post-raid zeroes: 2,093 municipalities in each of 2022–2024. These
+rows establish the treatment state after the cartel, but they do not create a
+cross-sectional comparison group during the cartel period. Restricting a
+regression to `data_found=true` would therefore select almost entirely on
+calendar time and should not be presented as a clean treated-versus-control
+design. Broader pre-raid procurement coverage is still required.
 
 ## Territorial harmonization
 
@@ -194,6 +216,8 @@ The classification alone is not a causal treatment design:
   allocation;
 - association propagation can make many municipalities share the same event;
 - default zeroes are mostly unresearched, not confirmed unexposed;
+- post-raid zeroes identify a common temporal regime, not comparable pre-raid
+  untreated municipalities;
 - fixed-geography merger aggregation can dilute a predecessor-level event; and
 - annual binary overlap ignores value, volume, service share, and duration.
 
@@ -224,7 +248,7 @@ The current default build contains:
 - 650 historical crosswalk rows;
 - 77 normalized evidence rows;
 - 130 exposed municipality-years;
-- 130 rows with `data_found=true`; and
+- 6,409 rows with `data_found=true`, of which 6,279 are post-raid zeroes; and
 - zero accepted municipality-contract rows.
 
 These counts measure documented coding coverage, not the cartel's true reach.

@@ -1,6 +1,7 @@
 # Austrian waste-cartel municipality-year exposure
 
-This project builds an auditable Austrian municipality-year panel:
+This project builds an auditable Austrian municipality-year panel in long
+form:
 
 ```text
 gkz,year,exposure,data_found
@@ -9,6 +10,13 @@ gkz,year,exposure,data_found
 The default output crosses every municipality in Statistics Austria's
 2024-01-01 GKZ universe with 2001–2024: 2,093 municipalities × 24 years =
 50,232 rows.
+
+It also writes a wide exposure matrix with one row per municipality and one
+column per year:
+
+```text
+gkz,municipality_name,2001,...,2024
+```
 
 For municipality \(i\) and year \(t\), `exposure=1` when at least one reviewed
 source supports:
@@ -21,6 +29,9 @@ source supports:
 
 All interval tests require at least one shared calendar day. Exposure is never
 carried into another year merely because a municipality was exposed once.
+Because the documented cartel periods end in March 2021, every full calendar
+year from 2022 onward is coded as a known non-exposed post-raid period for all
+municipalities. The mixed 2021 calendar year is not assigned this rule.
 
 ## Build the panel
 
@@ -36,7 +47,12 @@ source layer, constructs the historical-GKZ crosswalk and normalized inputs,
 then builds:
 
 - `data/processed/municipality_year_exposure.csv`;
+- `data/processed/municipality_year_exposure_wide.csv`; and
 - `data/processed/municipality_year_exposure_audit.csv`.
+
+The wide file is an exposure-only convenience view. Use the long file when an
+analysis must distinguish evidence-supported zeroes from default zeroes with
+`data_found`.
 
 Useful variants are:
 
@@ -87,7 +103,7 @@ from `data/raw/contracts.csv` by construction.
 | `data/sources/review/*.csv` | Decisions about ambiguous court-table entries |
 | `data/review/` | Generated procurement candidates awaiting review |
 | `data/raw/*.csv` | Generated, normalized classifier inputs and crosswalk |
-| `data/processed/*.csv` | Final panel and rule-level audit |
+| `data/processed/*.csv` | Long panel, wide exposure matrix, and rule-level audit |
 
 The generated normalized tables are:
 
@@ -135,7 +151,10 @@ facilities with unresolved service scope remain outside treatment.
 | 0 | false | No coded evidence covers the municipality-year; zero is a default |
 | 1 | false | Impossible by construction |
 
-Default zeroes are unknown coverage, not confirmed clean controls. Public court
+Direct, contract, and association records set municipality-year coverage in
+their supported intervals. In addition, 2022 onward is covered for every
+municipality by the project-wide post-raid non-exposure rule. Default zeroes in
+2001–2021 remain unknown coverage, not confirmed clean controls. Public court
 project lists are illustrative rather than exhaustive.
 
 The current official-source build contains:
@@ -144,7 +163,8 @@ The current official-source build contains:
 - 650 historical crosswalk rows;
 - 77 normalized evidence rows;
 - 130 exposed municipality-years; and
-- 130 municipality-years with `data_found=true`.
+- 6,409 municipality-years with `data_found=true`, including 6,279
+  post-raid non-exposed rows.
 
 The expansion is driven mainly by dated legal membership records for all 19
 GABL and 15 AWS Schwechat members at the corresponding FCC project years.
@@ -175,7 +195,8 @@ uv run python -m unittest discover -s tests -v
 Tests cover the balanced panel, day-level interval intersection, all three
 exposure paths, legal-status and geographic gates, source checksums, exact
 municipality resolution, automatic historical chains, split rejection,
-contract-review gating, and paginated TED candidate generation.
+contract-review gating, wide-output shape, the post-raid non-exposure
+invariant, and paginated TED candidate generation.
 
 See [`docs/data_sources.md`](docs/data_sources.md) for the ingestion runbook and
 [`docs/methodology.md`](docs/methodology.md) for the classification and

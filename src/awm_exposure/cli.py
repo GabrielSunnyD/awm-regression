@@ -16,7 +16,8 @@ from .pipeline import (
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Build a dated AWM-cartel exposure row for every Austrian GKZ-year."
+            "Build long and wide dated AWM-cartel exposure outputs for every "
+            "Austrian GKZ-year."
         )
     )
     parser.add_argument(
@@ -79,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         f"{summary.ever_exposed_municipalities} municipalities and "
         f"{summary.with_data_rows} rows with data."
     )
+    print(f"Wrote wide exposure output to {summary.wide_output}.")
     if summary.audit_output is not None:
         print(f"Wrote audit output to {summary.audit_output}.")
     return 0
-

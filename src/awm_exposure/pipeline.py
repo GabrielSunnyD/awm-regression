@@ -2,9 +2,10 @@
 
 The classifier deliberately keeps legal/procurement interpretation outside the
 code.  Its job is narrower: validate reviewed evidence intervals, intersect
-them with calendar years, apply three documented exposure rules, and emit a
-balanced GKZ-year panel.  A municipality is never carried forward merely
-because it was exposed once.
+them with calendar years, apply three documented exposure rules and the
+project-wide post-raid non-exposure rule, and emit long and wide balanced
+panels.  A municipality is never carried forward merely because it was exposed
+once.
 """
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ from typing import Iterable, Mapping, Sequence
 
 DEFAULT_START_YEAR = 2001
 DEFAULT_END_YEAR = 2024
+# The documented infringement periods end during March 2021.  Since an annual
+# exposure indicator is positive when even one supported day overlaps the
+# cartel, 2021 is a mixed year rather than a clean post-raid year.  Therefore
+# 2022 is the first full calendar year known to be outside this cartel period.
+FIRST_FULL_POST_RAID_YEAR = 2022
 
 
 class InputError(ValueError):
@@ -38,6 +44,7 @@ class BuildSummary:
     ever_exposed_municipalities: int
     with_data_rows: int
     main_output: Path
+    wide_output: Path
     audit_output: Path | None
 
 
@@ -271,11 +278,14 @@ def build_exposure(
     include_data_found: bool = True,
     write_audit: bool = True,
 ) -> BuildSummary:
-    """Build the balanced GKZ-year output and optional rule-level audit file.
+    """Build long/wide GKZ-year outputs and an optional rule-level audit file.
 
     Every municipality in ``municipalities.csv`` receives one row for every
     inclusive panel year.  A rule applies to a year if its dated source
-    intervals share at least one day with that calendar year.
+    intervals share at least one day with that calendar year.  Every full
+    calendar year from 2022 onward is a known, non-exposed post-raid period for
+    all municipalities.  The partial 2021 post-raid period does not establish
+    an annual zero because exposure earlier in 2021 remains possible.
     """
 
     _validate_year_range(start_year, end_year)
@@ -458,16 +468,28 @@ def build_exposure(
                     positive_sources[key].extend(_source_ids(row, exposure_row))
 
     main_rows: list[dict[str, object]] = []
+    wide_rows: list[dict[str, object]] = []
     audit_rows: list[dict[str, object]] = []
     ever_exposed: set[str] = set()
     for gkz in sorted(universe):
+        wide_row: dict[str, object] = {
+            "gkz": gkz,
+            "municipality_name": names[gkz],
+        }
         for year in range(start_year, end_year + 1):
             key = (gkz, year)
             direct = key in direct_positive
             contract = key in contract_positive
             association = key in association_positive
             exposed = direct or contract or association
-            found = key in data_found
+            post_raid = year >= FIRST_FULL_POST_RAID_YEAR
+            if post_raid and exposed:
+                raise InputError(
+                    f"{gkz} in {year}: positive exposure conflicts with the "
+                    "project-wide post-raid non-exposure rule; review the "
+                    "dated evidence"
+                )
+            found = key in data_found or post_raid
             if exposed and not found:  # Defensive assertion for future rule changes.
                 raise AssertionError(
                     f"Positive exposure without data_found for {gkz} in {year}"
@@ -483,6 +505,7 @@ def build_exposure(
             if include_data_found:
                 main_row["data_found"] = str(found).lower()
             main_rows.append(main_row)
+            wide_row[str(year)] = int(exposed)
 
             reasons = []
             if direct:
@@ -491,6 +514,15 @@ def build_exposure(
                 reasons.append("contract")
             if association:
                 reasons.append("association")
+            data_found_reasons = []
+            if direct_count[key]:
+                data_found_reasons.append("direct")
+            if contract_count[key]:
+                data_found_reasons.append("contract")
+            if association_count[key]:
+                data_found_reasons.append("association")
+            if post_raid:
+                data_found_reasons.append("post_raid")
             audit_rows.append(
                 {
                     "gkz": gkz,
@@ -502,18 +534,32 @@ def build_exposure(
                     "contract_exposure": int(contract),
                     "association_exposure": int(association),
                     "exposure_reasons": "|".join(reasons),
+                    "data_found_reasons": "|".join(data_found_reasons),
+                    "post_raid_non_exposure": int(post_raid),
                     "positive_source_ids": _join_unique(positive_sources[key]),
                     "direct_rows": direct_count[key],
                     "contract_rows": contract_count[key],
                     "evaluated_association_memberships": association_count[key],
                 }
             )
+        wide_rows.append(wide_row)
 
     main_output = output_dir / "municipality_year_exposure.csv"
     main_fields = ["gkz", "year", "exposure"]
     if include_data_found:
         main_fields.append("data_found")
     _write_csv_atomic(main_output, main_fields, main_rows)
+
+    wide_output = output_dir / "municipality_year_exposure_wide.csv"
+    _write_csv_atomic(
+        wide_output,
+        [
+            "gkz",
+            "municipality_name",
+            *(str(year) for year in range(start_year, end_year + 1)),
+        ],
+        wide_rows,
+    )
 
     audit_output: Path | None = None
     if write_audit:
@@ -530,6 +576,8 @@ def build_exposure(
                 "contract_exposure",
                 "association_exposure",
                 "exposure_reasons",
+                "data_found_reasons",
+                "post_raid_non_exposure",
                 "positive_source_ids",
                 "direct_rows",
                 "contract_rows",
@@ -546,5 +594,6 @@ def build_exposure(
         ever_exposed_municipalities=len(ever_exposed),
         with_data_rows=sum(row["data_found"] == "true" for row in audit_rows),
         main_output=main_output,
+        wide_output=wide_output,
         audit_output=audit_output,
     )
