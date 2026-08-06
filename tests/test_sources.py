@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -53,6 +54,51 @@ def write_municipality_zip(
                 archive.write(base.with_suffix(suffix), f"municipalities{suffix}")
 
 
+def write_admin_changes_zip(
+    path: Path,
+    changes: list[tuple[str, str, str, str, str, str]],
+) -> None:
+    rows = [
+        (
+            "Gemeindekennziffer alt",
+            "Gemeinde alt",
+            "Gemeindekennziffer neu",
+            "Gemeinde neu",
+            "in Kraft seit",
+            "Änderungsgrund",
+        ),
+        *changes,
+    ]
+    xml_rows = []
+    for row in rows:
+        cells = "".join(
+            "<table:table-cell office:value-type=\"string\">"
+            f"<text:p>{value}</text:p></table:table-cell>"
+            for value in row
+        )
+        xml_rows.append(f"<table:table-row>{cells}</table:table-row>")
+    content = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<office:document-content "
+        "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+        "xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" "
+        "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\">"
+        "<office:body><office:spreadsheet>"
+        "<table:table table:name=\"alle_GKZaenderungen\">"
+        + "".join(xml_rows)
+        + "</table:table></office:spreadsheet></office:body>"
+        "</office:document-content>"
+    )
+    ods_buffer = io.BytesIO()
+    with ZipFile(ods_buffer, "w", ZIP_DEFLATED) as ods:
+        ods.writestr("content.xml", content)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "aenderungenGemeinden_ab2002.ods", ods_buffer.getvalue()
+        )
+
+
 class SourcePipelineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -62,36 +108,52 @@ class SourcePipelineTests(unittest.TestCase):
         self.curated = self.sources / "curated"
         self.raw = self.root / "raw"
 
-    def write_registry(self, filename: str = "downloads/municipalities.zip") -> None:
+    def write_registry(
+        self,
+        filename: str = "downloads/municipalities.zip",
+        *,
+        include_changes: bool = False,
+    ) -> None:
+        rows = [
+            {
+                "source_id": "municipalities",
+                "source_url": "https://example.test/municipalities.zip",
+                "filename": filename,
+                "description": "Municipality test fixture",
+            },
+            {
+                "source_id": "court",
+                "source_url": "https://example.test/court.html",
+                "filename": "downloads/court.html",
+                "description": "Court test fixture",
+            },
+            {
+                "source_id": "members",
+                "source_url": "https://example.test/members.html",
+                "filename": "downloads/members.html",
+                "description": "Membership test fixture",
+            },
+        ]
+        if include_changes:
+            rows.append(
+                {
+                    "source_id": "changes",
+                    "source_url": "https://example.test/changes.zip",
+                    "filename": "downloads/changes.zip",
+                    "description": "Administrative changes fixture",
+                }
+            )
         write_csv(
             self.sources / "registry.csv",
             ["source_id", "source_url", "filename", "description"],
-            [
-                {
-                    "source_id": "municipalities",
-                    "source_url": "https://example.test/municipalities.zip",
-                    "filename": filename,
-                    "description": "Municipality test fixture",
-                },
-                {
-                    "source_id": "court",
-                    "source_url": "https://example.test/court.html",
-                    "filename": "downloads/court.html",
-                    "description": "Court test fixture",
-                },
-                {
-                    "source_id": "members",
-                    "source_url": "https://example.test/members.html",
-                    "filename": "downloads/members.html",
-                    "description": "Membership test fixture",
-                },
-            ],
+            rows,
         )
 
     def write_curated(self, municipality_name: str = "Alpha") -> None:
         write_csv(
             self.curated / "direct_evidence.csv",
             [
+                "gkz",
                 "municipality_name",
                 "exposed",
                 "exposure_start",
@@ -102,6 +164,7 @@ class SourcePipelineTests(unittest.TestCase):
             ],
             [
                 {
+                    "gkz": "",
                     "municipality_name": municipality_name,
                     "exposed": "1",
                     "exposure_start": "2019",
@@ -118,6 +181,9 @@ class SourcePipelineTests(unittest.TestCase):
                 "participant_name",
                 "cartel_start",
                 "cartel_end",
+                "legal_status",
+                "eligible_for_exposure",
+                "gkz_prefixes",
                 "source_id",
                 "source_url",
                 "notes",
@@ -128,6 +194,9 @@ class SourcePipelineTests(unittest.TestCase):
                     "participant_name": "Firm",
                     "cartel_start": "2003",
                     "cartel_end": "2021-03",
+                    "legal_status": "final",
+                    "eligible_for_exposure": "1",
+                    "gkz_prefixes": "",
                     "source_id": "court",
                 }
             ],
@@ -135,12 +204,17 @@ class SourcePipelineTests(unittest.TestCase):
         write_csv(
             self.curated / "contracts.csv",
             [
+                "candidate_id",
+                "review_status",
                 "municipality_name",
+                "gkz",
                 "participant_id",
                 "contract_start",
                 "contract_end",
                 "source_id",
                 "source_url",
+                "reviewer",
+                "reviewed_at",
                 "notes",
             ],
             [],
@@ -164,6 +238,38 @@ class SourcePipelineTests(unittest.TestCase):
                     "exposed": "1",
                     "exposure_start": "2019",
                     "exposure_end": "2020",
+                    "source_id": "court",
+                }
+            ],
+        )
+        write_csv(
+            self.curated / "participant_aliases.csv",
+            ["participant_id", "alias", "source_id", "notes"],
+            [
+                {
+                    "participant_id": "firm",
+                    "alias": "Firm Ltd",
+                    "source_id": "court",
+                }
+            ],
+        )
+        write_csv(
+            self.sources / "review" / "fcc_public_project_review.csv",
+            [
+                "source_year",
+                "project_name",
+                "review_status",
+                "disposition",
+                "target_id",
+                "source_id",
+            ],
+            [
+                {
+                    "source_year": "2019",
+                    "project_name": "Alpha",
+                    "review_status": "accepted",
+                    "disposition": "direct_evidence",
+                    "target_id": "Alpha",
                     "source_id": "court",
                 }
             ],
@@ -210,6 +316,7 @@ class SourcePipelineTests(unittest.TestCase):
         )
 
         self.assertEqual(summary.municipalities, 3)
+        self.assertEqual(summary.crosswalk_rows, 0)
         self.assertEqual(summary.evidence_rows, 4)
         for filename, fields in RAW_SCHEMAS.items():
             self.assertTrue((self.raw / filename).exists())
@@ -309,6 +416,159 @@ class SourcePipelineTests(unittest.TestCase):
         self.write_registry(filename="../outside.zip")
         with self.assertRaisesRegex(SourceDataError, "escapes"):
             download_sources(self.sources)
+
+    def test_historical_gkz_crosswalk_resolves_chains_and_rejects_splits(
+        self,
+    ) -> None:
+        self.write_registry(include_changes=True)
+        write_municipality_zip(
+            self.sources / "downloads/municipalities.zip",
+            [("10001", "Alpha New"), ("10002", "Beta")],
+        )
+        write_admin_changes_zip(
+            self.sources / "downloads/changes.zip",
+            [
+                (
+                    "09001",
+                    "Old Alpha",
+                    "09501",
+                    "Middle Alpha",
+                    "01.01.2010",
+                    "Renumbering",
+                ),
+                (
+                    "09501",
+                    "Middle Alpha",
+                    "10001",
+                    "Alpha New",
+                    "01.01.2015",
+                    "Merger",
+                ),
+                (
+                    "08001",
+                    "Split Place",
+                    "10001",
+                    "Alpha New",
+                    "01.01.2020",
+                    "Division",
+                ),
+                (
+                    "08001",
+                    "Split Place",
+                    "10002",
+                    "Beta",
+                    "01.01.2020",
+                    "Division",
+                ),
+            ],
+        )
+        self.write_curated(municipality_name="Old Alpha")
+        direct = read_csv(self.curated / "direct_evidence.csv")
+        direct[0]["gkz"] = "09001"
+        write_csv(
+            self.curated / "direct_evidence.csv",
+            list(direct[0]),
+            direct,
+        )
+
+        summary = build_raw_data(
+            self.sources,
+            self.raw,
+            municipality_source_id="municipalities",
+            municipality_changes_source_id="changes",
+        )
+        self.assertEqual(summary.crosswalk_rows, 4)
+        self.assertEqual(
+            read_csv(self.raw / "direct_evidence.csv")[0]["gkz"], "10001"
+        )
+        crosswalk = read_csv(self.raw / "municipality_crosswalk.csv")
+        self.assertEqual(
+            {
+                row["current_gkz"]
+                for row in crosswalk
+                if row["historical_gkz"] == "08001"
+            },
+            {"10001", "10002"},
+        )
+        self.assertTrue(
+            all(
+                row["mapping_status"] == "split_requires_review"
+                for row in crosswalk
+                if row["historical_gkz"] == "08001"
+            )
+        )
+
+        direct[0]["gkz"] = "08001"
+        direct[0]["municipality_name"] = "Split Place"
+        write_csv(
+            self.curated / "direct_evidence.csv",
+            list(direct[0]),
+            direct,
+        )
+        with self.assertRaisesRegex(SourceDataError, "was split"):
+            build_raw_data(
+                self.sources,
+                self.raw,
+                municipality_source_id="municipalities",
+                municipality_changes_source_id="changes",
+            )
+
+    def test_only_manually_accepted_contracts_enter_raw_inputs(self) -> None:
+        self.write_registry()
+        write_municipality_zip(
+            self.sources / "downloads/municipalities.zip",
+            [("10001", "Alpha"), ("10002", "Beta")],
+        )
+        self.write_curated()
+        fields = [
+            "candidate_id",
+            "review_status",
+            "municipality_name",
+            "gkz",
+            "participant_id",
+            "contract_start",
+            "contract_end",
+            "source_id",
+            "source_url",
+            "reviewer",
+            "reviewed_at",
+            "notes",
+        ]
+        write_csv(
+            self.curated / "contracts.csv",
+            fields,
+            [
+                {
+                    "candidate_id": "ted:accepted",
+                    "review_status": "accepted",
+                    "municipality_name": "Alpha",
+                    "participant_id": "firm",
+                    "contract_start": "2018",
+                    "contract_end": "2020",
+                    "source_id": "court",
+                    "reviewer": "Researcher",
+                    "reviewed_at": "2026-07-30",
+                },
+                {
+                    "candidate_id": "ted:pending",
+                    "review_status": "pending",
+                    "municipality_name": "Beta",
+                    "participant_id": "firm",
+                    "contract_start": "2018",
+                    "contract_end": "2020",
+                    "source_id": "court",
+                },
+            ],
+        )
+
+        build_raw_data(
+            self.sources,
+            self.raw,
+            municipality_source_id="municipalities",
+        )
+        contracts = read_csv(self.raw / "contracts.csv")
+        self.assertEqual(len(contracts), 1)
+        self.assertEqual(contracts[0]["gkz"], "10001")
 
 
 if __name__ == "__main__":

@@ -1,2 +1,1 @@
-participant_id,participant_name,cartel_start,cartel_end,source_id,source_url,notes
-
+participant_id,participant_name,cartel_start,cartel_end,legal_status,eligible_for_exposure,gkz_prefixes,source_id,source_url,notes

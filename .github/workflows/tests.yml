@@ -18,3 +18,4 @@ jobs:
       - run: uv run python -m compileall -q src scripts
       - run: uv run python -m unittest discover -s tests -v
       - run: uv run awm-build --help
+      - run: uv run awm-ted --help

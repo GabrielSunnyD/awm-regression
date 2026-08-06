@@ -1,0 +1,34 @@
+source_year,project_name,region,review_status,disposition,target_id,source_id,notes
+2004,GVA Mödling,Lower Austria,accepted,association_exposure,gva_moedling,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2008,AWV Graz-Umgebung,Styria,accepted,association_exposure,awv_graz_umgebung,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2009,AWV Pongau / Fa. Bauservice,Salzburg,accepted,association_exposure,awv_pongau,edikt_fcc_27kt1_24k,Coded narrowly as the named association project.
+2010,Stadtgemeinde St. Veit,Carinthia,accepted,direct_evidence,St. Veit an der Glan,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2011,Bezirk Mödling/Baden,Lower Austria,pending,requires_municipality_identification,,edikt_fcc_27kt1_24k,District-level wording does not identify affected municipalities.
+2011,Gemeinde Obervellach,Carinthia,accepted,direct_evidence,Obervellach,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2011,Marktgemeinde Brückl,Carinthia,accepted,direct_evidence,Brückl,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2011-2012,AWV Westkärnten,Carinthia,accepted,association_exposure,awv_westkaernten,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2012,Marktgemeinde Brückl,Carinthia,accepted,direct_evidence,Brückl,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2013,Abwasserverband Schwechat,Lower Austria,excluded,out_of_scope_wastewater,,edikt_fcc_27kt1_24k,Wastewater association is outside the municipal solid-waste treatment definition.
+2013,AWV Leibnitz,Styria,accepted,association_exposure,awv_leibnitz,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2013,Gemeinde Fischamend,Lower Austria,accepted,direct_evidence,Fischamend,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2013,Johann Hums GmbH (Mannersdorf a.d. Leitha),Lower Austria,excluded,private_customer,,edikt_fcc_27kt1_24k,Location in a municipality does not make the private customer municipal exposure.
+2013-2014,GVA Bruck a.d. Leitha/GABL,Lower Austria,accepted,association_exposure,gabl_bruck_leitha,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2014,Gemeinde St. Veit,Carinthia,accepted,direct_evidence,St. Veit an der Glan,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2014,GABL,Lower Austria,accepted,association_exposure,gabl_bruck_leitha,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2014,Kommune Langenzersdorf,Lower Austria,accepted,direct_evidence,Langenzersdorf,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2014,Stadtgemeinde Bruck a.d. Leitha,Lower Austria,accepted,direct_evidence,Bruck an der Leitha,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2015,Bezirk Hartberg,Styria,pending,requires_municipality_identification,,edikt_fcc_27kt1_24k,Reference to merged municipalities is too broad for automatic propagation.
+2015,GVA Bruck a.d. Leitha,Lower Austria,accepted,association_exposure,gabl_bruck_leitha,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2015-2016,AWV Weiz,Styria,accepted,association_exposure,awv_weiz,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2016,AWV Graz-Umgebung,Styria,accepted,association_exposure,awv_graz_umgebung,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2016,Gemeinde Bruck a.d. Mur,Styria,accepted,direct_evidence,Bruck an der Mur,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2016-2017,AWS Schwechat,Lower Austria,accepted,association_exposure,aws_schwechat,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2017,AWV Graz-Umgebung,Styria,accepted,association_exposure,awv_graz_umgebung,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2017-2018,Stadtgemeinde Leoben / Problemstoffe,Styria,accepted,direct_evidence,Leoben,edikt_fcc_27kt1_24k,Coded as separate annual rows in direct_evidence.csv.
+2018,ASZ Leibnitz,Styria,pending,requires_operator_and_scope,,edikt_fcc_27kt1_24k,An ASZ facility name alone does not identify which municipalities or association service scope should inherit exposure.
+2018,Gemeinde St. Veit an der Glan,Carinthia,accepted,direct_evidence,St. Veit an der Glan,edikt_fcc_27kt1_24k,Coded in direct_evidence.csv.
+2018,GVA Bruck a.d. Leitha,Lower Austria,accepted,association_exposure,gabl_bruck_leitha,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2019,AWV Hartberg,Styria,accepted,association_exposure,awv_hartberg,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2019,GVA Mödling,Lower Austria,accepted,association_exposure,gva_moedling,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.
+2019,Stadtpfarre St. Stephan Baden,Lower Austria,excluded,private_customer,,edikt_fcc_27kt1_24k,A parish customer is not a municipality contract.
+2020,GVA Mödling,Lower Austria,accepted,association_exposure,gva_moedling,edikt_fcc_27kt1_24k,Coded in association_exposure.csv.

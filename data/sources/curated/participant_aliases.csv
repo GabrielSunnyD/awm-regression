@@ -1,0 +1,15 @@
+participant_id,alias,source_id,notes
+fcc_austria,FCC Austria Abfall Service AG,edikt_fcc_27kt1_24k,Current legal name.
+fcc_austria,A.S.A. Abfall Service AG,edikt_fcc_27kt1_24k,Historical name used in older procurement records.
+fcc_austria,ASA Abfall Service AG,edikt_fcc_27kt1_24k,ASCII variant for search matching.
+huber_group,Huber Entsorgungsgesellschaft m.b.H. Nfg. KG,edikt_huber_28kt1_25v,Legal entity named in the final decision.
+huber_group,Huber Abfallservice Verwaltungsgesellschaft m.b.H.,edikt_huber_28kt1_25v,Legal entity named in the final decision.
+saubermacher_group,Saubermacher Dienstleistungs AG,bwb_saubermacher_final_2025,Legal entity named in the final decision notice.
+saubermacher_group,Saubermacher Dienstleistungs-Aktiengesellschaft,bwb_saubermacher_final_2025,Expanded legal-form spelling used in procurement notices.
+saubermacher_group,Trügler Recycling und Transport GesmbH,bwb_saubermacher_final_2025,Legal entity named in the final decision notice.
+saubermacher_group,pink robin gmbh,bwb_saubermacher_final_2025,Legal entity named in the final decision notice.
+killer_group,Killer GmbH & Co KG,bwb_killer_final_2026,Legal entity named in the final decision notice.
+killer_group,Killer GmbH,bwb_killer_final_2026,Legal entity named in the final decision notice.
+kab_kaernten,KAB Kärntner Abfallbewirtschaftung GmbH,bwb_kab_final_2026,Legal entity named in the final decision notice.
+energie_ag_umweltservice,Energie AG Oberösterreich Umwelt Service GmbH,bwb_energie_ag_pending_2026,Legal entity named in the pending application.
+energie_ag_umweltservice,Energie AG OÖ Umwelt Service GmbH,bwb_energie_ag_pending_2026,Abbreviated official name variant.

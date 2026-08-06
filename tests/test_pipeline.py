@@ -400,6 +400,86 @@ class ExposurePipelineTests(unittest.TestCase):
                     end_year=2001,
                 )
 
+    def test_participant_status_and_geographic_scope_gate_contract_exposure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "raw"
+            write_csv(
+                inputs / "municipalities.csv",
+                ["gkz"],
+                [{"gkz": "10101"}],
+            )
+            period_fields = [
+                "participant_id",
+                "cartel_start",
+                "cartel_end",
+                "legal_status",
+                "eligible_for_exposure",
+                "gkz_prefixes",
+            ]
+            periods = [
+                {
+                    "participant_id": "out-of-region",
+                    "cartel_start": "2010",
+                    "cartel_end": "2010",
+                    "legal_status": "final",
+                    "eligible_for_exposure": "1",
+                    "gkz_prefixes": "2",
+                },
+                {
+                    "participant_id": "pending",
+                    "cartel_start": "2010",
+                    "cartel_end": "2010",
+                    "legal_status": "pending_admitted",
+                    "eligible_for_exposure": "0",
+                    "gkz_prefixes": "1",
+                },
+            ]
+            write_csv(inputs / "cartel_periods.csv", period_fields, periods)
+            write_csv(
+                inputs / "contracts.csv",
+                [
+                    "gkz",
+                    "participant_id",
+                    "contract_start",
+                    "contract_end",
+                ],
+                [
+                    {
+                        "gkz": "10101",
+                        "participant_id": participant,
+                        "contract_start": "2010",
+                        "contract_end": "2010",
+                    }
+                    for participant in ("out-of-region", "pending")
+                ],
+            )
+
+            summary = build_exposure(
+                inputs,
+                root / "processed",
+                start_year=2010,
+                end_year=2010,
+            )
+            self.assertEqual(
+                read_csv(summary.main_output)[0]["exposure"], "0"
+            )
+            self.assertEqual(
+                read_csv(summary.main_output)[0]["data_found"], "true"
+            )
+
+            periods[1]["eligible_for_exposure"] = "1"
+            write_csv(inputs / "cartel_periods.csv", period_fields, periods)
+            with self.assertRaisesRegex(InputError, "non-final"):
+                build_exposure(
+                    inputs,
+                    root / "processed",
+                    start_year=2010,
+                    end_year=2010,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
