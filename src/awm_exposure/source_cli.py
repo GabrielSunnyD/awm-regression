@@ -80,13 +80,17 @@ def main(argv: list[str] | None = None) -> int:
             summary = download_sources(args.sources_dir, refresh=args.refresh)
             print(
                 f"Sources: {summary.downloaded} downloaded, "
-                f"{summary.cached} reused; manifest: {summary.manifest_path}"
+                f"{summary.cached} reused, "
+                f"{summary.citation_only} citation-only skipped; "
+                f"manifest: {summary.manifest_path}"
             )
         if args.command in {"validate", "build", "all"}:
             validation = validate_sources(args.sources_dir)
             print(
                 f"Validation: {validation.verified_downloads} source snapshots "
-                f"and {validation.curated_rows} curated rows verified."
+                f"verified, {validation.citation_only_sources} citation-only "
+                f"sources registered, and {validation.curated_rows} curated "
+                "rows verified."
             )
         if args.command in {"build", "all"}:
             summary = build_raw_data(

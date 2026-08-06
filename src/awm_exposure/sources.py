@@ -45,6 +45,7 @@ class SourceDataError(ValueError):
 class DownloadSummary:
     downloaded: int
     cached: int
+    citation_only: int
     manifest_path: Path
 
 
@@ -60,6 +61,7 @@ class RawBuildSummary:
 class ValidationSummary:
     registered_sources: int
     verified_downloads: int
+    citation_only_sources: int
     curated_rows: int
 
 
@@ -189,6 +191,7 @@ _SUPPORT_SCHEMAS: dict[str, set[str]] = {
 _LEGAL_STATUSES = {"final", "pending_admitted"}
 _REVIEW_STATUSES = {"accepted", "pending", "rejected"}
 _FCC_REVIEW_STATUSES = {"accepted", "pending", "excluded"}
+_ACQUISITION_METHODS = {"download", "citation_only"}
 
 
 def _read_csv(path: Path, required: set[str]) -> list[dict[str, str]]:
@@ -335,7 +338,14 @@ def _write_csv_atomic(
 def _load_registry(sources_dir: Path) -> list[dict[str, str]]:
     rows = _read_csv(
         sources_dir / "registry.csv",
-        {"source_id", "source_url", "filename", "description"},
+        {
+            "source_id",
+            "source_url",
+            "filename",
+            "acquisition_method",
+            "supporting_snapshot_id",
+            "description",
+        },
     )
     seen: set[str] = set()
     for row in rows:
@@ -347,10 +357,49 @@ def _load_registry(sources_dir: Path) -> list[dict[str, str]]:
         if source_id in seen:
             raise SourceDataError(f"Duplicate source_id in registry: {source_id}")
         seen.add(source_id)
-        _safe_target(sources_dir, row["filename"])
         if not row["source_url"].startswith("https://"):
             raise SourceDataError(
                 f"Source URLs must use HTTPS ({source_id}: {row['source_url']!r})"
+            )
+        acquisition_method = row["acquisition_method"]
+        if acquisition_method not in _ACQUISITION_METHODS:
+            raise SourceDataError(
+                f"Registry acquisition_method for {source_id} must be one of "
+                f"{', '.join(sorted(_ACQUISITION_METHODS))}"
+            )
+        if acquisition_method == "download":
+            _safe_target(sources_dir, row["filename"])
+            if row["supporting_snapshot_id"]:
+                raise SourceDataError(
+                    f"Download source {source_id} cannot declare a "
+                    "supporting_snapshot_id"
+                )
+        elif row["filename"]:
+            raise SourceDataError(
+                f"Citation-only source {source_id} must have a blank filename"
+            )
+
+    registry = {row["source_id"]: row for row in rows}
+    for row in rows:
+        if row["acquisition_method"] != "citation_only":
+            continue
+        source_id = row["source_id"]
+        supporting_id = row["supporting_snapshot_id"]
+        if not supporting_id:
+            raise SourceDataError(
+                f"Citation-only source {source_id} requires a "
+                "supporting_snapshot_id"
+            )
+        supporting_source = registry.get(supporting_id)
+        if supporting_source is None:
+            raise SourceDataError(
+                f"Citation-only source {source_id} references unknown "
+                f"supporting_snapshot_id {supporting_id!r}"
+            )
+        if supporting_source["acquisition_method"] != "download":
+            raise SourceDataError(
+                f"Citation-only source {source_id} must reference a "
+                "download source as supporting_snapshot_id"
             )
     return rows
 
@@ -361,12 +410,14 @@ def download_sources(
     refresh: bool = False,
     client: httpx.Client | None = None,
 ) -> DownloadSummary:
-    """Download every registered source and write a checksum manifest.
+    """Download snapshot sources and write a checksum manifest.
 
     Existing snapshots are reused by default.  This makes ordinary builds fast
     and preserves the exact legal evidence previously reviewed.  ``--refresh``
     is an explicit decision to replace those snapshots with current server
     content; the changed SHA-256 digest is then visible in the manifest.
+    ``citation_only`` registry rows are retained for precise provenance but are
+    never requested by this automated downloader.
     """
 
     sources_dir = Path(sources_dir)
@@ -404,9 +455,13 @@ def download_sources(
 
     downloaded = 0
     cached = 0
+    citation_only = 0
     entries: list[dict[str, object]] = []
     try:
         for source in registry:
+            if source["acquisition_method"] == "citation_only":
+                citation_only += 1
+                continue
             target = _safe_target(sources_dir, source["filename"])
             fetched_at: str
             if target.exists() and not refresh:
@@ -445,6 +500,7 @@ def download_sources(
                     "source_id": source["source_id"],
                     "source_url": source["source_url"],
                     "filename": source["filename"],
+                    "acquisition_method": source["acquisition_method"],
                     "description": source["description"],
                     "fetched_at": fetched_at,
                     "bytes": target.stat().st_size,
@@ -456,7 +512,7 @@ def download_sources(
             client.close()
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
         "sources": entries,
     }
@@ -464,17 +520,22 @@ def download_sources(
         manifest_path,
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     )
-    return DownloadSummary(downloaded, cached, manifest_path)
+    return DownloadSummary(downloaded, cached, citation_only, manifest_path)
 
 
 def validate_sources(sources_dir: Path | str) -> ValidationSummary:
-    """Verify registry/manifest agreement, cached bytes, and curated citations."""
+    """Verify snapshots, citation-only support, and curated citations."""
 
     sources_dir = Path(sources_dir)
     registry_rows = _load_registry(sources_dir)
     registry = {row["source_id"]: row for row in registry_rows}
     manifest = _manifest_entries(sources_dir)
-    if not manifest:
+    downloadable_rows = [
+        row
+        for row in registry_rows
+        if row["acquisition_method"] == "download"
+    ]
+    if downloadable_rows and not manifest:
         raise SourceDataError(
             f"No download manifest found in {sources_dir}; "
             "run `uv run awm-sources download`"
@@ -482,6 +543,8 @@ def validate_sources(sources_dir: Path | str) -> ValidationSummary:
 
     verified = 0
     for row in registry_rows:
+        if row["acquisition_method"] == "citation_only":
+            continue
         source_id = row["source_id"]
         target = _safe_target(sources_dir, row["filename"])
         if not target.exists():
@@ -502,6 +565,11 @@ def validate_sources(sources_dir: Path | str) -> ValidationSummary:
             raise SourceDataError(
                 f"Manifest filename does not match registry for {source_id}; "
                 "run `uv run awm-sources download --refresh`"
+            )
+        if entry.get("acquisition_method", "download") != "download":
+            raise SourceDataError(
+                f"Manifest acquisition method does not match registry for "
+                f"{source_id}; run `uv run awm-sources download --refresh`"
             )
         _validate_cached_snapshot(target, source_id, entry)
         verified += 1
@@ -568,6 +636,10 @@ def validate_sources(sources_dir: Path | str) -> ValidationSummary:
     return ValidationSummary(
         registered_sources=len(registry_rows),
         verified_downloads=verified,
+        citation_only_sources=sum(
+            row["acquisition_method"] == "citation_only"
+            for row in registry_rows
+        ),
         curated_rows=curated_rows,
     )
 
@@ -1136,9 +1208,15 @@ def build_raw_data(
         raise SourceDataError(
             f"Municipality source_id is not registered: {municipality_source_id}"
         )
+    municipality_source = registry[municipality_source_id]
+    if municipality_source["acquisition_method"] != "download":
+        raise SourceDataError(
+            f"Municipality source_id must use acquisition_method=download: "
+            f"{municipality_source_id}"
+        )
 
     municipality_path = _safe_target(
-        sources_dir, registry[municipality_source_id]["filename"]
+        sources_dir, municipality_source["filename"]
     )
     municipalities = _municipalities_from_zip(municipality_path)
     municipality_names = {
@@ -1161,6 +1239,12 @@ def build_raw_data(
                 f"{municipality_changes_source_id}"
             )
         change_source = registry[municipality_changes_source_id]
+        if change_source["acquisition_method"] != "download":
+            raise SourceDataError(
+                "Municipality-change source_id must use "
+                "acquisition_method=download: "
+                f"{municipality_changes_source_id}"
+            )
         change_path = _safe_target(sources_dir, change_source["filename"])
         crosswalk = _municipality_crosswalk_from_zip(
             change_path,
@@ -1245,17 +1329,24 @@ def build_raw_data(
         _write_csv_atomic(raw_dir / filename, fieldnames, rows)
 
     # The raw source log makes a source_id resolvable without relying on a URL
-    # that might later change.  A blank checksum indicates `build` was run
-    # before `download`; normal `all` runs populate every checksum.
+    # that might later change.  A blank checksum either means `build` was run
+    # before `download` or identifies a citation-only page that is deliberately
+    # not fetched by automation.  The acquisition fields distinguish the two.
     manifest = _manifest_entries(sources_dir)
     source_log_rows = []
     for row in registry_rows:
-        entry = manifest.get(row["source_id"], {})
+        entry = (
+            manifest.get(row["source_id"], {})
+            if row["acquisition_method"] == "download"
+            else {}
+        )
         source_log_rows.append(
             {
                 "source_id": row["source_id"],
                 "source_url": row["source_url"],
                 "local_path": row["filename"],
+                "acquisition_method": row["acquisition_method"],
+                "supporting_snapshot_id": row["supporting_snapshot_id"],
                 "fetched_at": entry.get("fetched_at", ""),
                 "sha256": entry.get("sha256", ""),
                 "description": row["description"],
@@ -1267,6 +1358,8 @@ def build_raw_data(
             "source_id",
             "source_url",
             "local_path",
+            "acquisition_method",
+            "supporting_snapshot_id",
             "fetched_at",
             "sha256",
             "description",

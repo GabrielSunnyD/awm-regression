@@ -3,12 +3,13 @@
 The pipeline separates four different claims:
 
 ```text
-official snapshot → reviewed proposition → normalized row → annual exposure
+official snapshot or reviewed citation → reviewed proposition → normalized row → annual exposure
 ```
 
-Only the first and third steps are mechanically reproducible. A checksum proves
-that a cached file has not changed; it does not prove that a researcher's legal
-interpretation is correct.
+Downloaded snapshots and normalization are mechanically reproducible;
+browser review of a citation-only page is not. A checksum proves that a cached
+file has not changed; it does not prove that a researcher's legal interpretation
+is correct.
 
 ## Reproducible build
 
@@ -19,8 +20,9 @@ uv run awm-build
 
 The complete command:
 
-1. downloads missing sources from `data/sources/registry.csv`;
-2. reuses byte-verified snapshots unless `--refresh` is requested;
+1. downloads missing registry rows whose `acquisition_method` is `download`;
+2. reuses byte-verified snapshots unless `--refresh` is requested and skips
+   rows explicitly marked `citation_only`;
 3. validates the registry, manifest, curated schemas, citations, review
    statuses, participant legal status, and geographic codes;
 4. derives the 2024 municipality universe and historical-GKZ crosswalk;
@@ -44,7 +46,29 @@ uv run awm-build --offline
 ```
 
 to forbid network requests. Use `--refresh` only when deliberately replacing
-the evidence snapshots reviewed previously.
+the evidence snapshots reviewed previously. Neither mode requests a
+`citation_only` URL.
+
+## Downloaded snapshots and citation-only pages
+
+Every registry row declares one acquisition method:
+
+| `acquisition_method` | `filename` | `supporting_snapshot_id` | Behavior |
+|---|---|---|---|
+| `download` | required | blank | Downloaded, format-checked, hashed, and recorded in the manifest |
+| `citation_only` | blank | required | Never requested automatically; retained as a precise browser-reviewed citation |
+
+A citation-only row must point to a registered `download` row through
+`supporting_snapshot_id`. This records a reproducible supporting source without
+pretending the uncached page itself was checksum-verified.
+
+The four BWB participant notices are currently `citation_only` because BWB's
+Sucuri layer returns a JavaScript-cookie challenge to non-browser clients. They
+all point to `bwb_faq_2026`, a normally downloadable official PDF that
+corroborates the case-wide period, named respondents, and procedural status.
+The individual notice URLs remain the basis for finer participant-specific
+details. Those details are browser-reviewed but not byte-reproducible until BWB
+provides an automatable document endpoint.
 
 ## What validation checks
 
@@ -52,8 +76,11 @@ The download manifest records each source's URL, local filename, access time,
 byte size, and SHA-256 hash. Validation checks that:
 
 - registry URLs use HTTPS;
-- registry filenames cannot escape `data/sources`;
-- every registered snapshot and manifest entry exists;
+- `acquisition_method` is `download` or `citation_only`;
+- download filenames cannot escape `data/sources`;
+- citation-only rows have no filename and reference a registered downloadable
+  supporting snapshot;
+- every downloadable snapshot and manifest entry exists;
 - manifest URL and filename agree with the registry;
 - file signatures are plausible for ZIP, PDF, or HTML;
 - cached byte sizes and SHA-256 hashes still match;
@@ -84,7 +111,7 @@ review possible.
 
 | Path | Role | Committed |
 |---|---|:---:|
-| `data/sources/registry.csv` | Official URL registry | yes |
+| `data/sources/registry.csv` | Official URL and acquisition-policy registry | yes |
 | `data/sources/curated/*.csv` | Accepted evidence, pending contract decisions, aliases | yes |
 | `data/sources/review/*.csv` | Disposition inventory for ambiguous source entries | yes |
 | `data/sources/downloads/` | Downloaded source bytes | no |
@@ -250,8 +277,9 @@ indistinguishable.
 
 ## Adding a new source
 
-1. Add an HTTPS URL, confined filename, description, and unique `source_id` to
-   `data/sources/registry.csv`.
+1. Add an HTTPS URL, description, unique `source_id`, and acquisition method to
+   `data/sources/registry.csv`. Prefer `download`. Supply a confined filename
+   and leave `supporting_snapshot_id` blank.
 2. Run `uv run awm-sources download`.
 3. Read the downloaded snapshot.
 4. Add only the narrow supported proposition to the appropriate curated CSV.
@@ -268,6 +296,13 @@ indistinguishable.
    `data/raw/municipality_crosswalk.csv`, and the affected rows in
    `data/processed/municipality_year_exposure_audit.csv`.
 
-For publication or litigation, preserve the registry, manifest, snapshots,
-curated records, generated source log, code commit, and methodology version
-together.
+Use `citation_only` only when an official page cannot be acquired by a normal
+HTTP client and has been reviewed in a browser. Leave `filename` blank, provide
+a downloadable `supporting_snapshot_id`, and document which details depend on
+the uncached page. Do not use this mode merely to avoid registering or
+preserving an available snapshot.
+
+For publication or litigation, preserve the registry, manifest, available
+snapshots, curated records, generated source log, code commit, and methodology
+version together. Archive citation-only pages manually where permitted before
+relying on their page-specific details in a final evidentiary record.
