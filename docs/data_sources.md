@@ -26,7 +26,7 @@ The complete command:
 4. derives the 2024 municipality universe and historical-GKZ crosswalk;
 5. resolves reviewed municipality evidence into normalized `data/raw` tables;
 6. excludes all non-accepted procurement rows; and
-7. builds the 2001–2024 panel and audit.
+7. builds the 2001–2024 long panel, wide exposure matrix, and audit.
 
 For diagnosis, run the stages separately:
 
@@ -91,7 +91,7 @@ review possible.
 | `data/sources/download_manifest.json` | Snapshot hashes and provenance | no |
 | `data/review/` | Generated TED candidates | no, except README |
 | `data/raw/*.csv` | Generated normalized data and crosswalk | no |
-| `data/processed/*.csv` | Generated panel and audit | no |
+| `data/processed/*.csv` | Generated long panel, wide matrix, and audit | no |
 
 Never hand-edit `data/raw` or `data/processed`.
 
@@ -226,6 +226,27 @@ Schwechat 2016–2017 entries.
 Current association web pages are not projected backward. Propagation occurs
 only when membership, association exposure, and the panel year share at least
 one actual day.
+
+## Post-raid annual coverage
+
+The registered BWB FAQ and participant findings place the end of the documented
+cartel in March 2021. The panel therefore treats 2022 as the first complete
+post-raid calendar year. For every municipality, 2022–2024 receive:
+
+```text
+exposure=0,data_found=true
+```
+
+The audit marks these rows with `post_raid_non_exposure=1` and includes
+`post_raid` in `data_found_reasons`. The rule does not apply to 2021 because an
+annual exposure indicator remains positive if supported exposure occurred on
+any day from January through March. Any curated rule that attempts to create a
+positive exposure after 2021 stops the build for review.
+
+The wide file `data/processed/municipality_year_exposure_wide.csv` contains
+only annual exposure values. Use the long file when `data_found` is needed;
+otherwise unsupported pre-raid zeroes and supported post-raid zeroes are
+indistinguishable.
 
 ## Adding a new source
 

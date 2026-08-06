@@ -162,7 +162,7 @@ class ExposurePipelineTests(unittest.TestCase):
             self.assertEqual(summary.rows, 120)
             self.assertEqual(summary.exposed_rows, 16)
             self.assertEqual(summary.ever_exposed_municipalities, 3)
-            self.assertEqual(summary.with_data_rows, 20)
+            self.assertEqual(summary.with_data_rows, 30)
 
             main = {
                 (row["gkz"], row["year"]): row
@@ -193,6 +193,22 @@ class ExposurePipelineTests(unittest.TestCase):
             self.assertEqual(main[("10104", "2007")]["exposure"], "1")
             self.assertEqual(main[("10104", "2016")]["data_found"], "false")
             self.assertEqual(main[("10106", "2010")]["data_found"], "false")
+            self.assertEqual(main[("10106", "2021")]["data_found"], "false")
+            self.assertEqual(main[("10106", "2022")]["data_found"], "true")
+
+            wide = {row["gkz"]: row for row in read_csv(summary.wide_output)}
+            self.assertEqual(len(wide), 6)
+            self.assertEqual(
+                list(wide["10102"]),
+                [
+                    "gkz",
+                    "municipality_name",
+                    *(str(year) for year in range(2004, 2024)),
+                ],
+            )
+            self.assertEqual(wide["10102"]["municipality_name"], "Contract")
+            self.assertEqual(wide["10102"]["2005"], "1")
+            self.assertEqual(wide["10102"]["2011"], "0")
 
             audit = {
                 (row["gkz"], row["year"]): row
@@ -207,6 +223,12 @@ class ExposurePipelineTests(unittest.TestCase):
             )
             self.assertEqual(
                 audit[("10104", "2007")]["exposure_reasons"], "association"
+            )
+            self.assertEqual(
+                audit[("10106", "2022")]["data_found_reasons"], "post_raid"
+            )
+            self.assertEqual(
+                audit[("10106", "2022")]["post_raid_non_exposure"], "1"
             )
 
     def test_same_calendar_year_without_same_day_overlap_is_not_exposed(self) -> None:
@@ -255,6 +277,36 @@ class ExposurePipelineTests(unittest.TestCase):
                 },
             )
 
+    def test_positive_post_raid_evidence_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "raw"
+            write_csv(
+                inputs / "municipalities.csv",
+                ["gkz"],
+                [{"gkz": "10101"}],
+            )
+            write_csv(
+                inputs / "direct_evidence.csv",
+                ["gkz", "exposed", "exposure_start", "exposure_end"],
+                [
+                    {
+                        "gkz": "10101",
+                        "exposed": "1",
+                        "exposure_start": "2022",
+                        "exposure_end": "2022",
+                    }
+                ],
+            )
+
+            with self.assertRaisesRegex(InputError, "post-raid non-exposure"):
+                build_exposure(
+                    inputs,
+                    root / "processed",
+                    start_year=2022,
+                    end_year=2022,
+                )
+
     def test_missing_optional_files_produce_balanced_default_zeroes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -284,6 +336,23 @@ class ExposurePipelineTests(unittest.TestCase):
             )
             self.assertEqual(summary.rows, 4)
             self.assertIsNone(summary.audit_output)
+            self.assertEqual(
+                read_csv(summary.wide_output),
+                [
+                    {
+                        "gkz": "00101",
+                        "municipality_name": "",
+                        "2001": "0",
+                        "2002": "0",
+                    },
+                    {
+                        "gkz": "10102",
+                        "municipality_name": "",
+                        "2001": "0",
+                        "2002": "0",
+                    },
+                ],
+            )
 
     def test_default_panel_range_is_2001_through_2024(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -305,6 +374,9 @@ class ExposurePipelineTests(unittest.TestCase):
             self.assertEqual(summary.rows, 24)
             self.assertEqual(rows[0]["year"], "2001")
             self.assertEqual(rows[-1]["year"], "2024")
+            self.assertEqual(rows[-4]["data_found"], "false")
+            self.assertEqual(rows[-3]["data_found"], "true")
+            self.assertEqual(rows[-1]["data_found"], "true")
 
     def test_unknown_evidence_gkz_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

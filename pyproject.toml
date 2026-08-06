@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "awm-exposure"
-version = "0.4.0"
+version = "0.5.0"
 description = "Build an Austrian municipality-year waste-cartel exposure panel"
 requires-python = ">=3.12"
 dependencies = [
