@@ -73,6 +73,40 @@ uv run awm-sources build
 uv run awm-exposure
 ```
 
+## Estimate the expenditure effect
+
+The regression layer joins the long exposure panel to a researcher-supplied
+wide expenditure CSV and an optional long time-varying controls CSV, then
+estimates expenditure on exposure and controls with GKZ and year fixed effects:
+
+```bash
+uv run awm-regress \
+  --expenditure-csv path/to/expenditure.csv \
+  --controls-csv path/to/time_varying_controls.csv
+```
+
+Expenditure input has one row per GKZ and one column per year:
+
+```text
+gkz,2001,2002,...,2024
+```
+
+Controls input has one row per GKZ-year and one column per variable:
+
+```text
+gkz,year,population,unemployment_rate,...
+```
+
+The default outcome is expenditure in levels, fixed effects are always `gkz`
+and `year`, and standard errors are clustered by GKZ. Unknown-coverage exposure
+rows (`data_found=false`) are excluded by default instead of being treated as
+clean zeroes. The command writes coefficient results, the exact estimation
+sample, model metadata with all drop counts, and a text summary under
+`data/regression/`.
+
+See [`docs/regression.md`](docs/regression.md) for the strict input schemas,
+options, output interpretation, and causal-identification requirements.
+
 ## Find procurement candidates
 
 TED discovery is a separate, review-only workflow:
@@ -203,8 +237,10 @@ Tests cover the balanced panel, day-level interval intersection, all three
 exposure paths, legal-status and geographic gates, source checksums, exact
 municipality resolution, automatic historical chains, split rejection,
 contract-review gating, citation-only download exclusion, wide-output shape,
-the post-raid non-exposure invariant, and paginated TED candidate generation.
+the post-raid non-exposure invariant, fixed-effects coefficient recovery,
+unknown-coverage exclusion, regression schema/rank checks, and paginated TED
+candidate generation.
 
-See [`docs/data_sources.md`](docs/data_sources.md) for the ingestion runbook and
-[`docs/methodology.md`](docs/methodology.md) for the classification and
-identification choices.
+See [`docs/data_sources.md`](docs/data_sources.md) for the ingestion runbook,
+[`docs/methodology.md`](docs/methodology.md) for exposure classification, and
+[`docs/regression.md`](docs/regression.md) for estimation.

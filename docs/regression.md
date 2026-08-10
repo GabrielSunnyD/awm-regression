@@ -1,0 +1,176 @@
+# Fixed-effects expenditure regression
+
+## Estimand
+
+The analysis command estimates
+
+\[
+Y_{it}=\beta E_{it}+X_{it}'\gamma+\alpha_i+\lambda_t+\varepsilon_{it},
+\]
+
+where (Y_{it}) is expenditure for municipality (i) in year (t), (E_{it})
+is the project's municipality-year exposure indicator, (X_{it}) contains the
+time-varying controls supplied by the researcher, (alpha_i) is a GKZ fixed
+effect, and (lambda_t) is a year fixed effect. The reported exposure
+coefficient is (hat\beta).
+
+GKZ fixed effects absorb stable differences across municipalities. Year fixed
+effects absorb shocks common to all municipalities in a year. The default
+standard errors are clustered by GKZ so arbitrary serial correlation and
+heteroskedasticity are allowed within a municipality. `--cluster gkz-year`
+uses two-way GKZ and year clustering as a robustness option.
+
+The software estimates the stated model; it cannot by itself make
+(hat\beta) causal. A causal interpretation additionally requires that,
+conditional on the controls and fixed effects, changes in exposure are not
+driven by unobserved municipality-specific expenditure shocks. It also
+requires appropriate timing, no relevant spillovers, and correctly measured
+exposure, expenditure, and controls. Pre-trend or event-study evidence should
+be evaluated separately before describing the result as a cartel effect.
+
+## Inputs
+
+### Exposure panel
+
+The default exposure input is the existing long output:
+
+```text
+data/processed/municipality_year_exposure.csv
+```
+
+It must contain one row per key with:
+
+```text
+gkz,year,exposure,data_found
+```
+
+By default, only `data_found=true` rows are eligible for estimation. The
+exposure pipeline defines `data_found=false, exposure=0` as unknown evidence
+coverage, not a verified unexposed control. Use `--include-unknown-exposure`
+only for a deliberate alternative specification that treats those default
+zeroes as usable. If the exposure CSV has no `data_found` column, that option
+is required.
+
+### Expenditure CSV
+
+Expenditure is a wide CSV with one row per GKZ and one column per year:
+
+```csv
+gkz,2001,2002,2003
+10101,125000.00,129500.00,133250.00
+10102,98000.00,101400.00,104100.00
+```
+
+Requirements:
+
+- the identifier column is named exactly `gkz`;
+- every other header is a four-digit year;
+- each GKZ appears once;
+- cells are plain finite numbers using a decimal point, or blank/missing; and
+- GKZ values with one to five digits are zero-padded to five digits during the
+  join.
+
+The command does not deflate, winsorize, scale, or otherwise reinterpret these
+amounts. Supply expenditure in the units and price basis appropriate for the
+research design. The default level model reports the coefficient in those
+units. `--log-outcome` instead estimates `log(expenditure)` and therefore
+requires every included amount to be strictly positive.
+
+An editable example is available at
+[`data/input_templates/expenditure.csv`](../data/input_templates/expenditure.csv).
+
+### Time-varying controls CSV
+
+Controls are optional and use long form:
+
+```csv
+gkz,year,population,unemployment_rate
+10101,2001,1520,0.041
+10101,2002,1542,0.039
+10102,2001,1180,0.052
+```
+
+The file must include `gkz` and `year`. Every other column is a separate numeric
+regressor and its header becomes the coefficient name. Each GKZ-year may appear
+only once. Blank values are treated as missing; rows with a missing outcome or
+any missing control are excluded through complete-case analysis.
+Transformations such as logs, per-capita values, or lags must be created in
+this input CSV and named clearly.
+
+An editable example is available at
+[`data/input_templates/time_varying_controls.csv`](../data/input_templates/time_varying_controls.csv).
+
+## Run the model
+
+After building the exposure panel:
+
+```bash
+uv sync --locked
+uv run awm-regress \
+  --expenditure-csv path/to/expenditure.csv \
+  --controls-csv path/to/time_varying_controls.csv
+```
+
+The exposure path and output directory can be overridden:
+
+```bash
+uv run awm-regress \
+  --exposure-csv data/processed/municipality_year_exposure.csv \
+  --expenditure-csv path/to/expenditure.csv \
+  --controls-csv path/to/time_varying_controls.csv \
+  --output-dir data/regression \
+  --start-year 2001 \
+  --end-year 2024 \
+  --cluster gkz
+```
+
+Controls may be omitted for an exposure-only fixed-effects specification.
+Useful deliberate alternatives include:
+
+```bash
+# Semi-log outcome; expenditures must be positive
+uv run awm-regress --expenditure-csv path/to/expenditure.csv --log-outcome
+
+# Two-way GKZ/year clustered standard errors
+uv run awm-regress --expenditure-csv path/to/expenditure.csv --cluster gkz-year
+
+# Sensitivity analysis that admits unknown-coverage exposure zeroes
+uv run awm-regress \
+  --expenditure-csv path/to/expenditure.csv \
+  --include-unknown-exposure
+```
+
+## Sample construction
+
+The command applies these rules in order:
+
+1. restrict to `--start-year` and `--end-year`, when supplied;
+2. exclude unknown exposure coverage unless explicitly included;
+3. require a nonmissing expenditure value;
+4. require every supplied control to be nonmissing; and
+5. iteratively remove GKZ or year fixed-effect groups represented by only one
+   remaining observation.
+
+It then removes GKZ and year means through iterative two-way residualization,
+which is valid for unbalanced panels. The model fails rather than silently
+dropping a regressor when exposure or controls are collinear after fixed
+effects. The JSON metadata records mutually exclusive drop counts, fixed-effect
+rank, connected components, residual degrees of freedom, cluster counts, and
+the residualization iteration count.
+
+## Outputs
+
+The default `data/regression/` directory receives:
+
+| File | Purpose |
+|---|---|
+| `regression_results.csv` | Estimates and inference for exposure and each control |
+| `regression_sample.csv` | Exact estimation rows and within-model residual diagnostics |
+| `regression_metadata.json` | Reproducible specification, sample construction, and numerical diagnostics |
+| `regression_summary.txt` | Compact console-style summary |
+
+In the level model, the exposure estimate is the conditional change in
+expenditure units associated with `exposure` changing from 0 to 1. In the log
+model it is a log-point change; the exact percentage equivalent for a binary
+indicator is (100[\exp(\hat\beta)-1]). Always interpret the estimate together
+with its uncertainty, sample coverage, and identifying assumptions.

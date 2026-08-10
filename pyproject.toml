@@ -4,18 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "awm-exposure"
-version = "0.5.1"
-description = "Build an Austrian municipality-year waste-cartel exposure panel"
+version = "0.6.0"
+description = "Build and analyze an Austrian municipality-year waste-cartel exposure panel"
 requires-python = ">=3.12"
 dependencies = [
     "httpx[socks]>=0.28.1,<1",
+    "numpy>=2.0,<3",
     "pyshp>=2.3.1,<3",
+    "scipy>=1.14,<2",
 ]
 
 [project.scripts]
 awm-exposure = "awm_exposure.cli:main"
 awm-sources = "awm_exposure.source_cli:main"
 awm-build = "awm_exposure.project_cli:main"
+awm-regress = "awm_exposure.regression_cli:main"
 awm-ted = "awm_exposure.ted_cli:main"
 
 [tool.setuptools.packages.find]

@@ -255,6 +255,13 @@ auditing. A causal municipal regression should wait for broader procurement
 coverage or use a design that does not treat `data_found=false` as a verified
 clean control.
 
+The repository's `awm-regress` command enforces the latter safeguard by
+excluding `data_found=false` rows unless an analyst explicitly opts into an
+alternative specification. This protects the coding meaning of the zeroes but
+does not solve the selective-coverage problem described above. See
+[`regression.md`](regression.md) for the estimator, input schemas, diagnostics,
+and additional identification requirements.
+
 ## Current release
 
 The current default build contains:

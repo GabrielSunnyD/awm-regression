@@ -10,9 +10,13 @@ data/sources/downloads/
 data/sources/download_manifest.json
 data/raw/*.csv
 data/processed/*.csv
+data/regression/*.csv
+data/regression/*.json
+data/regression/*.txt
 data/review/*.csv
 data/review/*_metadata.json
 
 !data/sources/registry.csv
 !data/sources/curated/*.csv
+!data/regression/README.md
 !data/review/README.md
