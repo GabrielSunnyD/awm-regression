@@ -13,3 +13,8 @@ The default long build is sorted by `gkz,year` and contains one row for every
 2024 GKZ in every year from 2001 through 2024. The wide file contains exposure
 only; use the long file to retain `data_found`. Generated CSVs are ignored by
 Git.
+
+The long file is also the default exposure input for `uv run awm-regress`.
+Regression excludes `data_found=false` rows unless the analyst deliberately
+passes `--include-unknown-exposure`; see
+[`../../docs/regression.md`](../../docs/regression.md).
