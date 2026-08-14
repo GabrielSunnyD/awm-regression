@@ -11,6 +11,6 @@ default:
   dimensions, degrees of freedom, and estimation diagnostics; and
 - `regression_summary.txt`: a compact human-readable model summary.
 
-These files are generated from researcher-supplied expenditure and control
-data and are not committed. See [`../../docs/regression.md`](../../docs/regression.md)
-for the input schemas and interpretation.
+These files are generated from the researcher-supplied long regression input
+and are not committed. See [`../../docs/regression.md`](../../docs/regression.md)
+for the input schema and interpretation.

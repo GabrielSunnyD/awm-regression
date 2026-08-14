@@ -51,54 +51,52 @@ only for a deliberate alternative specification that treats those default
 zeroes as usable. If the exposure CSV has no `data_found` column, that option
 is required.
 
-### Expenditure CSV
+### Regression input CSV
 
-Expenditure is a wide CSV with one row per GKZ and one column per year:
+Expenditure and time-varying controls are supplied together in one long CSV
+with one row per GKZ-year:
 
 ```csv
-gkz,2001,2002,2003
-10101,125000.00,129500.00,133250.00
-10102,98000.00,101400.00,104100.00
+gkz,year,expenditure,population,unemployment_rate
+10101,2001,125000.00,1520,0.041
+10101,2002,129500.00,1542,0.039
+10102,2001,98000.00,1180,0.052
 ```
 
 Requirements:
 
-- the identifier column is named exactly `gkz`;
-- every other header is a four-digit year;
-- each GKZ appears once;
-- cells are plain finite numbers using a decimal point, or blank/missing; and
+- the key columns are named exactly `gkz` and `year`;
+- the outcome column is named exactly `expenditure`;
+- every additional column is treated as a time-varying control and its header
+  becomes the coefficient name;
+- each GKZ-year appears at most once;
+- `year` uses four digits;
+- expenditure and control cells are plain finite numbers using a decimal point,
+  or blank/missing; and
 - GKZ values with one to five digits are zero-padded to five digits during the
   join.
+
+An empty expenditure or control cell means that the variable was not found for
+that GKZ-year. Complete-case analysis excludes the entire row if expenditure or
+any control is missing. A numeric `0` is not missing: it is retained as the
+actual value zero. The recognized explicit missing tokens are `.`, `NA`, `N/A`,
+`NaN`, and `null`, without regard to letter case. A missing `gkz` or `year` is a
+schema error because the row cannot be identified.
 
 The command does not deflate, winsorize, scale, or otherwise reinterpret these
 amounts. Supply expenditure in the units and price basis appropriate for the
 research design. The default level model reports the coefficient in those
 units. `--log-outcome` instead estimates `log(expenditure)` and therefore
-requires every included amount to be strictly positive.
+requires every included amount to be strictly positive; consequently, a real
+zero expenditure is valid in the level model but invalid in the log model.
 
-An editable example is available at
-[`data/input_templates/expenditure.csv`](../data/input_templates/expenditure.csv).
-
-### Time-varying controls CSV
-
-Controls are optional and use long form:
-
-```csv
-gkz,year,population,unemployment_rate
-10101,2001,1520,0.041
-10101,2002,1542,0.039
-10102,2001,1180,0.052
-```
-
-The file must include `gkz` and `year`. Every other column is a separate numeric
-regressor and its header becomes the coefficient name. Each GKZ-year may appear
-only once. Blank values are treated as missing; rows with a missing outcome or
-any missing control are excluded through complete-case analysis.
-Transformations such as logs, per-capita values, or lags must be created in
+Controls are optional: a file containing only `gkz`, `year`, and `expenditure`
+estimates an exposure-only fixed-effects specification. When controls are used,
+transformations such as logs, per-capita values, or lags must be created in
 this input CSV and named clearly.
 
 An editable example is available at
-[`data/input_templates/time_varying_controls.csv`](../data/input_templates/time_varying_controls.csv).
+[`data/input_templates/regression_input.csv`](../data/input_templates/regression_input.csv).
 
 ## Run the model
 
@@ -107,8 +105,7 @@ After building the exposure panel:
 ```bash
 uv sync --locked
 uv run awm-regress \
-  --expenditure-csv path/to/expenditure.csv \
-  --controls-csv path/to/time_varying_controls.csv
+  --input-csv path/to/regression_input.csv
 ```
 
 The exposure path and output directory can be overridden:
@@ -116,27 +113,25 @@ The exposure path and output directory can be overridden:
 ```bash
 uv run awm-regress \
   --exposure-csv data/processed/municipality_year_exposure.csv \
-  --expenditure-csv path/to/expenditure.csv \
-  --controls-csv path/to/time_varying_controls.csv \
+  --input-csv path/to/regression_input.csv \
   --output-dir data/regression \
   --start-year 2001 \
   --end-year 2024 \
   --cluster gkz
 ```
 
-Controls may be omitted for an exposure-only fixed-effects specification.
 Useful deliberate alternatives include:
 
 ```bash
 # Semi-log outcome; expenditures must be positive
-uv run awm-regress --expenditure-csv path/to/expenditure.csv --log-outcome
+uv run awm-regress --input-csv path/to/regression_input.csv --log-outcome
 
 # Two-way GKZ/year clustered standard errors
-uv run awm-regress --expenditure-csv path/to/expenditure.csv --cluster gkz-year
+uv run awm-regress --input-csv path/to/regression_input.csv --cluster gkz-year
 
 # Sensitivity analysis that admits unknown-coverage exposure zeroes
 uv run awm-regress \
-  --expenditure-csv path/to/expenditure.csv \
+  --input-csv path/to/regression_input.csv \
   --include-unknown-exposure
 ```
 
@@ -146,8 +141,9 @@ The command applies these rules in order:
 
 1. restrict to `--start-year` and `--end-year`, when supplied;
 2. exclude unknown exposure coverage unless explicitly included;
-3. require a nonmissing expenditure value;
-4. require every supplied control to be nonmissing; and
+3. require a matching row in the regression input;
+4. require nonmissing expenditure and every supplied control, retaining
+   numeric zeroes; and
 5. iteratively remove GKZ or year fixed-effect groups represented by only one
    remaining observation.
 

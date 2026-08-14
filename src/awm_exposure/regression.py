@@ -1,12 +1,11 @@
 """Estimate expenditure effects with municipality and year fixed effects.
 
 The analysis layer is deliberately explicit about data transformations.  It
-joins the project's long exposure panel to a wide expenditure CSV and an
-optional long controls CSV, applies complete-case filtering, residualizes all
-model variables against GKZ and year fixed effects, and estimates OLS with
-cluster-aware inference.  It does not deflate, winsorize, log, or otherwise
-transform researcher-supplied variables unless the caller requests the
-documented log-outcome option.
+joins the project's long exposure panel to a single long regression-input CSV,
+applies complete-case filtering, residualizes all model variables against GKZ
+and year fixed effects, and estimates OLS with cluster-aware inference.  It
+does not deflate, winsorize, log, or otherwise transform researcher-supplied
+variables unless the caller requests the documented log-outcome option.
 """
 
 from __future__ import annotations
@@ -52,6 +51,12 @@ class RegressionSummary:
 class _ExposureValue:
     exposure: float
     data_found: bool | None
+
+
+@dataclass(frozen=True)
+class _AnalysisValue:
+    expenditure: float | None
+    controls: tuple[float | None, ...]
 
 
 @dataclass(frozen=True)
@@ -225,48 +230,14 @@ def _read_exposure(
     return values, has_data_found
 
 
-def _read_expenditure(path: Path) -> dict[tuple[str, int], float | None]:
-    fields, rows = _read_rows(path)
-    _require_columns(path, fields, {"gkz"})
-    year_fields = [field for field in fields if field != "gkz"]
-    if not year_fields:
-        raise RegressionInputError(
-            f"{path} must contain at least one YYYY expenditure column"
-        )
-    invalid = sorted(field for field in year_fields if not _YEAR.fullmatch(field))
-    if invalid:
-        raise RegressionInputError(
-            f"{path} has non-year expenditure column(s): {', '.join(invalid)}"
-        )
-    years = [_parse_year(field, f"{path} header") for field in year_fields]
-
-    values: dict[tuple[str, int], float | None] = {}
-    seen_gkz: set[str] = set()
-    for row in rows:
-        context = _context(path, row)
-        gkz = _normalize_gkz(row["gkz"], context)
-        if gkz in seen_gkz:
-            raise RegressionInputError(f"{context}: duplicate expenditure GKZ {gkz}")
-        seen_gkz.add(gkz)
-        for field, year in zip(year_fields, years, strict=True):
-            values[(gkz, year)] = _parse_number(
-                row[field], f"{context} column {field}", optional=True
-            )
-    if not seen_gkz:
-        raise RegressionInputError(f"{path} contains no expenditure rows")
-    return values
-
-
-def _read_controls(
+def _read_analysis_input(
     path: Path,
-) -> tuple[tuple[str, ...], dict[tuple[str, int], tuple[float | None, ...]]]:
+) -> tuple[tuple[str, ...], dict[tuple[str, int], _AnalysisValue]]:
     fields, rows = _read_rows(path)
-    _require_columns(path, fields, {"gkz", "year"})
-    control_names = tuple(field for field in fields if field not in {"gkz", "year"})
-    if not control_names:
-        raise RegressionInputError(
-            f"{path} must contain at least one control after gkz and year"
-        )
+    _require_columns(path, fields, {"gkz", "year", "expenditure"})
+    control_names = tuple(
+        field for field in fields if field not in {"gkz", "year", "expenditure"}
+    )
     reserved = sorted(
         name for name in control_names if name.lower() in _RESERVED_CONTROL_NAMES
     )
@@ -275,7 +246,7 @@ def _read_controls(
             f"{path} uses reserved control name(s): {', '.join(reserved)}"
         )
 
-    values: dict[tuple[str, int], tuple[float | None, ...]] = {}
+    values: dict[tuple[str, int], _AnalysisValue] = {}
     for row in rows:
         context = _context(path, row)
         key = (
@@ -284,14 +255,21 @@ def _read_controls(
         )
         if key in values:
             raise RegressionInputError(
-                f"{context}: duplicate controls row for GKZ {key[0]}, year {key[1]}"
+                f"{context}: duplicate input row for GKZ {key[0]}, year {key[1]}"
             )
-        values[key] = tuple(
-            _parse_number(row[name], f"{context} column {name}", optional=True)
-            for name in control_names
+        values[key] = _AnalysisValue(
+            expenditure=_parse_number(
+                row["expenditure"],
+                f"{context} column expenditure",
+                optional=True,
+            ),
+            controls=tuple(
+                _parse_number(row[name], f"{context} column {name}", optional=True)
+                for name in control_names
+            ),
         )
     if not values:
-        raise RegressionInputError(f"{path} contains no control rows")
+        raise RegressionInputError(f"{path} contains no input rows")
     return control_names, values
 
 
@@ -489,10 +467,9 @@ def _validate_options(
 
 def run_regression(
     exposure_csv: Path | str,
-    expenditure_csv: Path | str,
+    input_csv: Path | str,
     output_dir: Path | str,
     *,
-    controls_csv: Path | str | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
     log_outcome: bool = False,
@@ -514,8 +491,7 @@ def run_regression(
         confidence_level=confidence_level,
     )
     exposure_path = Path(exposure_csv)
-    expenditure_path = Path(expenditure_csv)
-    controls_path = Path(controls_csv) if controls_csv is not None else None
+    input_path = Path(input_csv)
     destination = Path(output_dir)
 
     exposure_values, has_data_found = _read_exposure(exposure_path)
@@ -524,19 +500,14 @@ def run_regression(
             f"{exposure_path} has no data_found column. Rebuild the standard long "
             "exposure panel or explicitly pass include_unknown_exposure=True."
         )
-    expenditure_values = _read_expenditure(expenditure_path)
-    if controls_path is None:
-        control_names: tuple[str, ...] = ()
-        control_values: dict[
-            tuple[str, int], tuple[float | None, ...]
-        ] = {}
-    else:
-        control_names, control_values = _read_controls(controls_path)
+    control_names, analysis_values = _read_analysis_input(input_path)
 
     diagnostics = {
         "exposure_rows": len(exposure_values),
+        "input_rows": len(analysis_values),
         "outside_requested_years": 0,
         "unknown_exposure": 0,
+        "missing_input_row": 0,
         "missing_expenditure": 0,
         "missing_controls": 0,
         "singleton_fixed_effect": 0,
@@ -553,7 +524,11 @@ def run_regression(
             diagnostics["unknown_exposure"] += 1
             continue
 
-        expenditure = expenditure_values.get((gkz, year))
+        analysis_value = analysis_values.get((gkz, year))
+        if analysis_value is None:
+            diagnostics["missing_input_row"] += 1
+            continue
+        expenditure = analysis_value.expenditure
         if expenditure is None:
             diagnostics["missing_expenditure"] += 1
             continue
@@ -563,14 +538,11 @@ def run_regression(
                 f"found {expenditure} for GKZ {gkz}, year {year}"
             )
 
-        if controls_path is None:
-            controls: tuple[float, ...] = ()
-        else:
-            raw_controls = control_values.get((gkz, year))
-            if raw_controls is None or any(value is None for value in raw_controls):
-                diagnostics["missing_controls"] += 1
-                continue
-            controls = tuple(float(value) for value in raw_controls if value is not None)
+        raw_controls = analysis_value.controls
+        if any(value is None for value in raw_controls):
+            diagnostics["missing_controls"] += 1
+            continue
+        controls = tuple(float(value) for value in raw_controls if value is not None)
         observations.append(
             _Observation(
                 gkz=gkz,
@@ -832,7 +804,7 @@ def run_regression(
         + " | gkz + year"
     )
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "model": {
             "formula": formula,
             "outcome": outcome_label,
@@ -844,8 +816,7 @@ def run_regression(
         },
         "inputs": {
             "exposure_csv": str(exposure_path),
-            "expenditure_csv": str(expenditure_path),
-            "controls_csv": str(controls_path) if controls_path else None,
+            "input_csv": str(input_path),
             "start_year": start_year,
             "end_year": end_year,
         },
