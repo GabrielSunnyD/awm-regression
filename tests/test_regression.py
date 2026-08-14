@@ -26,19 +26,18 @@ def read_csv(path: Path) -> list[dict[str, str]]:
 
 class RegressionPipelineTests(unittest.TestCase):
     def make_exact_panel(
-        self, root: Path, *, include_data_found: bool = True
-    ) -> tuple[Path, Path, Path]:
+        self,
+        root: Path,
+        *,
+        include_data_found: bool = True,
+        include_controls: bool = True,
+    ) -> tuple[Path, Path]:
         years = list(range(2010, 2016))
         exposure_rows: list[dict[str, object]] = []
-        expenditure_rows: list[dict[str, object]] = []
-        control_rows: list[dict[str, object]] = []
+        input_rows: list[dict[str, object]] = []
 
         for municipality_index in range(8):
             gkz = f"{101 + municipality_index:05d}"
-            expenditure_row: dict[str, object] = {
-                # Confirm that codes whose leading zeroes were lost still join.
-                "gkz": str(101 + municipality_index),
-            }
             for year_index, year in enumerate(years):
                 exposed = int(
                     (
@@ -71,43 +70,41 @@ class RegressionPipelineTests(unittest.TestCase):
                         municipality_index == 0 and year_index == 1
                     )
                 exposure_rows.append(exposure_row)
-                expenditure_row[str(year)] = expenditure
-                control_rows.append(
-                    {"gkz": gkz, "year": year, "population": control}
-                )
-            expenditure_rows.append(expenditure_row)
+                input_row: dict[str, object] = {
+                    # Confirm that codes whose leading zeroes were lost still join.
+                    "gkz": str(101 + municipality_index),
+                    "year": year,
+                    "expenditure": expenditure,
+                }
+                if include_controls:
+                    input_row["population"] = control
+                input_rows.append(input_row)
 
         exposure_path = root / "exposure.csv"
-        expenditure_path = root / "expenditure.csv"
-        controls_path = root / "controls.csv"
+        input_path = root / "regression-input.csv"
         exposure_fields = ["gkz", "year", "exposure"]
         if include_data_found:
             exposure_fields.append("data_found")
         write_csv(exposure_path, exposure_fields, exposure_rows)
         write_csv(
-            expenditure_path,
-            ["gkz", *(str(year) for year in years)],
-            expenditure_rows,
+            input_path,
+            ["gkz", "year", "expenditure"]
+            + (["population"] if include_controls else []),
+            input_rows,
         )
-        write_csv(
-            controls_path,
-            ["gkz", "year", "population"],
-            control_rows,
-        )
-        return exposure_path, expenditure_path, controls_path
+        return exposure_path, input_path
 
     def test_estimates_two_way_fixed_effect_model_and_writes_audit_outputs(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            exposure, expenditure, controls = self.make_exact_panel(root)
+            exposure, input_csv = self.make_exact_panel(root)
 
             summary = run_regression(
                 exposure,
-                expenditure,
+                input_csv,
                 root / "output",
-                controls_csv=controls,
                 cluster="none",
             )
 
@@ -131,6 +128,10 @@ class RegressionPipelineTests(unittest.TestCase):
             self.assertIn(("00101", 2010), sample_keys)
 
             metadata = json.loads(summary.metadata_output.read_text(encoding="utf-8"))
+            self.assertEqual(metadata["schema_version"], 2)
+            self.assertEqual(metadata["inputs"]["input_csv"], str(input_csv))
+            self.assertNotIn("expenditure_csv", metadata["inputs"])
+            self.assertNotIn("controls_csv", metadata["inputs"])
             self.assertEqual(
                 metadata["model"]["formula"],
                 "expenditure ~ exposure + population | gkz + year",
@@ -145,22 +146,20 @@ class RegressionPipelineTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            exposure, expenditure, controls = self.make_exact_panel(
+            exposure, input_csv = self.make_exact_panel(
                 root, include_data_found=False
             )
             with self.assertRaisesRegex(RegressionInputError, "no data_found column"):
                 run_regression(
                     exposure,
-                    expenditure,
+                    input_csv,
                     root / "rejected",
-                    controls_csv=controls,
                 )
 
             summary = run_regression(
                 exposure,
-                expenditure,
+                input_csv,
                 root / "accepted",
-                controls_csv=controls,
                 include_unknown_exposure=True,
                 cluster="none",
             )
@@ -170,24 +169,24 @@ class RegressionPipelineTests(unittest.TestCase):
     def test_gkz_and_two_way_clustered_inference_are_finite(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            exposure, expenditure, controls = self.make_exact_panel(root)
-            rows = read_csv(expenditure)
-            years = list(range(2010, 2016))
-            for municipality_index, row in enumerate(rows):
-                for year_index, year in enumerate(years):
-                    noise = 0.4 * (
-                        (
-                            7 * municipality_index
-                            + 5 * year_index
-                            + municipality_index * year_index
-                        )
-                        % 13
-                        - 6
+            exposure, input_csv = self.make_exact_panel(root)
+            rows = read_csv(input_csv)
+            for row in rows:
+                municipality_index = int(row["gkz"]) - 101
+                year_index = int(row["year"]) - 2010
+                noise = 0.4 * (
+                    (
+                        7 * municipality_index
+                        + 5 * year_index
+                        + municipality_index * year_index
                     )
-                    row[str(year)] = float(row[str(year)]) + noise
+                    % 13
+                    - 6
+                )
+                row["expenditure"] = float(row["expenditure"]) + noise
             write_csv(
-                expenditure,
-                ["gkz", *(str(year) for year in years)],
+                input_csv,
+                ["gkz", "year", "expenditure", "population"],
                 rows,
             )
 
@@ -195,9 +194,8 @@ class RegressionPipelineTests(unittest.TestCase):
                 with self.subTest(cluster=cluster):
                     summary = run_regression(
                         exposure,
-                        expenditure,
+                        input_csv,
                         root / cluster,
-                        controls_csv=controls,
                         cluster=cluster,
                     )
                     self.assertGreater(summary.exposure_standard_error, 0)
@@ -213,13 +211,15 @@ class RegressionPipelineTests(unittest.TestCase):
                         metadata["model"]["standard_errors"], cluster
                     )
 
-    def test_controls_csv_is_optional(self) -> None:
+    def test_control_columns_are_optional(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            exposure, expenditure, _ = self.make_exact_panel(root)
+            exposure, input_csv = self.make_exact_panel(
+                root, include_controls=False
+            )
             summary = run_regression(
                 exposure,
-                expenditure,
+                input_csv,
                 root / "output",
                 cluster="none",
             )
@@ -232,18 +232,21 @@ class RegressionPipelineTests(unittest.TestCase):
     def test_missing_complete_cases_and_singletons_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            exposure, expenditure, controls = self.make_exact_panel(root)
-            rows = read_csv(controls)
+            exposure, input_csv = self.make_exact_panel(root)
+            rows = read_csv(input_csv)
             for row in rows:
-                if row["gkz"] == "00108" and row["year"] != "2010":
+                if row["gkz"] == "108" and row["year"] != "2010":
                     row["population"] = ""
-            write_csv(controls, ["gkz", "year", "population"], rows)
+            write_csv(
+                input_csv,
+                ["gkz", "year", "expenditure", "population"],
+                rows,
+            )
 
             summary = run_regression(
                 exposure,
-                expenditure,
+                input_csv,
                 root / "output",
-                controls_csv=controls,
                 cluster="none",
             )
             metadata = json.loads(summary.metadata_output.read_text(encoding="utf-8"))
@@ -255,58 +258,101 @@ class RegressionPipelineTests(unittest.TestCase):
     def test_rejects_rank_deficient_controls_after_fixed_effects(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            exposure, expenditure, controls = self.make_exact_panel(root)
-            rows = read_csv(controls)
+            exposure, input_csv = self.make_exact_panel(root)
+            rows = read_csv(input_csv)
             for row in rows:
                 row["population"] = "1"
-            write_csv(controls, ["gkz", "year", "population"], rows)
+            write_csv(
+                input_csv,
+                ["gkz", "year", "expenditure", "population"],
+                rows,
+            )
 
             with self.assertRaisesRegex(RegressionInputError, "rank deficient"):
                 run_regression(
                     exposure,
-                    expenditure,
+                    input_csv,
                     root / "output",
-                    controls_csv=controls,
                 )
 
-    def test_rejects_nonpositive_log_outcome_and_invalid_wide_schema(self) -> None:
+    def test_rejects_nonpositive_log_outcome_and_missing_expenditure_column(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            exposure, expenditure, controls = self.make_exact_panel(root)
-            rows = read_csv(expenditure)
-            rows[0]["2010"] = "0"
+            exposure, input_csv = self.make_exact_panel(root)
+            rows = read_csv(input_csv)
+            rows[0]["expenditure"] = "0"
             write_csv(
-                expenditure,
-                ["gkz", *(str(year) for year in range(2010, 2016))],
+                input_csv,
+                ["gkz", "year", "expenditure", "population"],
                 rows,
             )
             with self.assertRaisesRegex(RegressionInputError, "strictly positive"):
                 run_regression(
                     exposure,
-                    expenditure,
+                    input_csv,
                     root / "log-output",
-                    controls_csv=controls,
                     log_outcome=True,
                 )
 
-            bad_expenditure = root / "bad-expenditure.csv"
+            bad_input = root / "bad-input.csv"
             write_csv(
-                bad_expenditure,
-                ["gkz", "municipality_name", "2010"],
-                [{"gkz": "00101", "municipality_name": "Example", "2010": 1}],
+                bad_input,
+                ["gkz", "year", "population"],
+                [{"gkz": "00101", "year": 2010, "population": 1000}],
             )
-            with self.assertRaisesRegex(RegressionInputError, "non-year"):
+            with self.assertRaisesRegex(RegressionInputError, "expenditure"):
                 run_regression(
                     exposure,
-                    bad_expenditure,
+                    bad_input,
                     root / "bad-output",
-                    controls_csv=controls,
                 )
+
+    def test_blank_values_are_dropped_but_numeric_zeroes_are_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exposure, input_csv = self.make_exact_panel(root)
+            rows = read_csv(input_csv)
+            for row in rows:
+                key = (row["gkz"], row["year"])
+                if key == ("101", "2010"):
+                    row["expenditure"] = "0"
+                    row["population"] = "0"
+                elif key == ("102", "2010"):
+                    row["expenditure"] = ""
+                elif key == ("103", "2010"):
+                    row["population"] = ""
+            write_csv(
+                input_csv,
+                ["gkz", "year", "expenditure", "population"],
+                rows,
+            )
+
+            summary = run_regression(
+                exposure,
+                input_csv,
+                root / "output",
+                cluster="none",
+            )
+            sample = {
+                (row["gkz"], row["year"]): row
+                for row in read_csv(summary.sample_output)
+            }
+            self.assertEqual(sample[("00101", "2010")]["expenditure"], "0")
+            self.assertEqual(sample[("00101", "2010")]["population"], "0")
+            self.assertNotIn(("00102", "2010"), sample)
+            self.assertNotIn(("00103", "2010"), sample)
+
+            metadata = json.loads(summary.metadata_output.read_text(encoding="utf-8"))
+            drops = metadata["sample"]["drop_counts"]
+            self.assertEqual(drops["missing_expenditure"], 1)
+            self.assertEqual(drops["missing_controls"], 1)
 
     def test_rejects_positive_exposure_marked_as_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            exposure, expenditure, controls = self.make_exact_panel(root)
+            exposure, input_csv = self.make_exact_panel(root)
             rows = read_csv(exposure)
             rows[0]["data_found"] = "false"
             self.assertEqual(rows[0]["exposure"], "1")
@@ -320,9 +366,8 @@ class RegressionPipelineTests(unittest.TestCase):
             ):
                 run_regression(
                     exposure,
-                    expenditure,
+                    input_csv,
                     root / "output",
-                    controls_csv=controls,
                 )
 
 

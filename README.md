@@ -75,28 +75,25 @@ uv run awm-exposure
 
 ## Estimate the expenditure effect
 
-The regression layer joins the long exposure panel to a researcher-supplied
-wide expenditure CSV and an optional long time-varying controls CSV, then
-estimates expenditure on exposure and controls with GKZ and year fixed effects:
+The regression layer joins the long exposure panel to one researcher-supplied
+long CSV, then estimates expenditure on exposure and controls with GKZ and year
+fixed effects:
 
 ```bash
 uv run awm-regress \
-  --expenditure-csv path/to/expenditure.csv \
-  --controls-csv path/to/time_varying_controls.csv
+  --input-csv path/to/regression_input.csv
 ```
 
-Expenditure input has one row per GKZ and one column per year:
+The input has one row per GKZ-year. `gkz`, `year`, and `expenditure` are
+required; every additional column is a time-varying control:
 
 ```text
-gkz,2001,2002,...,2024
+gkz,year,expenditure,population,unemployment_rate,...
 ```
 
-Controls input has one row per GKZ-year and one column per variable:
-
-```text
-gkz,year,population,unemployment_rate,...
-```
-
+Blank expenditure or control values mean that the variable could not be found
+for that GKZ-year, so the entire row is excluded through complete-case
+filtering. Numeric zeroes are genuine values and remain in the level analysis.
 The default outcome is expenditure in levels, fixed effects are always `gkz`
 and `year`, and standard errors are clustered by GKZ. Unknown-coverage exposure
 rows (`data_found=false`) are excluded by default instead of being treated as

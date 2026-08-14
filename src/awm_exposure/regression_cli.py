@@ -25,17 +25,12 @@ def make_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--expenditure-csv",
+        "--input-csv",
         type=Path,
         required=True,
-        help="Wide CSV with gkz plus one expenditure column per YYYY year.",
-    )
-    parser.add_argument(
-        "--controls-csv",
-        type=Path,
         help=(
-            "Optional long CSV with gkz, year, and one numeric column per "
-            "time-varying control."
+            "Long CSV with gkz, year, expenditure, and optional numeric "
+            "time-varying control columns."
         ),
     )
     parser.add_argument(
@@ -91,8 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         summary = run_regression(
             exposure_csv=args.exposure_csv,
-            expenditure_csv=args.expenditure_csv,
-            controls_csv=args.controls_csv,
+            input_csv=args.input_csv,
             output_dir=args.output_dir,
             start_year=args.start_year,
             end_year=args.end_year,
