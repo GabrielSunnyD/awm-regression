@@ -173,20 +173,32 @@ class ExposurePipelineTests(unittest.TestCase):
                 {
                     "gkz": "10101",
                     "year": "2004",
+                    "exposure_direct": "1",
+                    "exposure_regional": "0",
                     "exposure": "1",
+                    "exposure_basis": "direct:municipality",
                     "data_found": "true",
+                    "data_found_direct": "true",
+                    "data_found_regional": "false",
                 },
             )
             self.assertEqual(main[("10101", "2005")]["data_found"], "false")
             self.assertEqual(main[("10102", "2005")]["exposure"], "1")
+            self.assertEqual(main[("10102", "2005")]["exposure_direct"], "1")
+            self.assertEqual(main[("10102", "2005")]["exposure_regional"], "0")
             self.assertEqual(main[("10102", "2011")]["data_found"], "false")
             self.assertEqual(
                 main[("10103", "2022")],
                 {
                     "gkz": "10103",
                     "year": "2022",
+                    "exposure_direct": "0",
+                    "exposure_regional": "0",
                     "exposure": "0",
+                    "exposure_basis": "",
                     "data_found": "true",
+                    "data_found_direct": "true",
+                    "data_found_regional": "true",
                 },
             )
             self.assertEqual(main[("10104", "2006")]["exposure"], "0")
@@ -215,14 +227,15 @@ class ExposurePipelineTests(unittest.TestCase):
                 for row in read_csv(summary.audit_output)
             }
             self.assertEqual(
-                audit[("10102", "2005")]["exposure_reasons"], "contract"
+                audit[("10102", "2005")]["exposure_reasons"], "direct:contract"
             )
             self.assertEqual(
                 audit[("10102", "2005")]["positive_source_ids"],
                 "award-1|decision-a",
             )
             self.assertEqual(
-                audit[("10104", "2007")]["exposure_reasons"], "association"
+                audit[("10104", "2007")]["exposure_reasons"],
+                "direct:association",
             )
             self.assertEqual(
                 audit[("10106", "2022")]["data_found_reasons"], "post_raid"
@@ -272,8 +285,13 @@ class ExposurePipelineTests(unittest.TestCase):
                 {
                     "gkz": "10101",
                     "year": "2021",
+                    "exposure_direct": "0",
+                    "exposure_regional": "0",
                     "exposure": "0",
+                    "exposure_basis": "",
                     "data_found": "true",
+                    "data_found_direct": "true",
+                    "data_found_regional": "false",
                 },
             )
 
@@ -328,10 +346,10 @@ class ExposurePipelineTests(unittest.TestCase):
             self.assertEqual(
                 read_csv(summary.main_output),
                 [
-                    {"gkz": "00101", "year": "2001", "exposure": "0"},
-                    {"gkz": "00101", "year": "2002", "exposure": "0"},
-                    {"gkz": "10102", "year": "2001", "exposure": "0"},
-                    {"gkz": "10102", "year": "2002", "exposure": "0"},
+                    {"gkz": "00101", "year": "2001", "exposure_direct": "0", "exposure_regional": "0", "exposure": "0", "exposure_basis": ""},
+                    {"gkz": "00101", "year": "2002", "exposure_direct": "0", "exposure_regional": "0", "exposure": "0", "exposure_basis": ""},
+                    {"gkz": "10102", "year": "2001", "exposure_direct": "0", "exposure_regional": "0", "exposure": "0", "exposure_basis": ""},
+                    {"gkz": "10102", "year": "2002", "exposure_direct": "0", "exposure_regional": "0", "exposure": "0", "exposure_basis": ""},
                 ],
             )
             self.assertEqual(summary.rows, 4)
@@ -551,6 +569,79 @@ class ExposurePipelineTests(unittest.TestCase):
                     start_year=2010,
                     end_year=2010,
                 )
+
+    def test_regional_proxy_is_separate_source_backed_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "raw"
+            write_csv(
+                inputs / "municipalities.csv",
+                ["gkz", "municipality_name"],
+                [
+                    {"gkz": "10101", "municipality_name": "In region"},
+                    {"gkz": "80101", "municipality_name": "Outside region"},
+                ],
+            )
+            write_csv(
+                inputs / "regional_exposure.csv",
+                [
+                    "region_type", "region_code", "exposure_start",
+                    "exposure_end", "legal_status", "eligible_for_exposure",
+                    "source_id",
+                ],
+                [{
+                    "region_type": "state", "region_code": "1",
+                    "exposure_start": "2002-07", "exposure_end": "2003-03",
+                    "legal_status": "final", "eligible_for_exposure": "1",
+                    "source_id": "final-decision",
+                }],
+            )
+            write_csv(
+                inputs / "direct_evidence.csv",
+                ["gkz", "exposed", "exposure_start", "exposure_end", "source_id"],
+                [{
+                    "gkz": "10101", "exposed": "1", "exposure_start": "2003",
+                    "exposure_end": "2003", "source_id": "municipal-decision",
+                }],
+            )
+
+            summary = build_exposure(
+                inputs, root / "processed", start_year=2001, end_year=2004
+            )
+            panel = {
+                (row["gkz"], row["year"]): row
+                for row in read_csv(summary.main_output)
+            }
+            self.assertEqual(panel[("10101", "2001")]["exposure"], "0")
+            self.assertEqual(panel[("10101", "2002")]["exposure"], "1")
+            self.assertEqual(panel[("10101", "2002")]["exposure_direct"], "0")
+            self.assertEqual(panel[("10101", "2002")]["exposure_regional"], "1")
+            self.assertEqual(panel[("10101", "2003")]["exposure"], "1")
+            self.assertEqual(panel[("10101", "2004")]["exposure"], "0")
+            self.assertEqual(panel[("80101", "2002")]["exposure"], "0")
+            self.assertEqual(panel[("10101", "2003")]["exposure_direct"], "1")
+            self.assertEqual(panel[("10101", "2003")]["exposure_regional"], "1")
+            self.assertEqual(
+                panel[("10101", "2003")]["exposure_basis"],
+                "direct:municipality|regional:state",
+            )
+            self.assertEqual(summary.region_added_rows, 1)
+            self.assertEqual(summary.region_added_municipalities, 1)
+            self.assertTrue(summary.has_within_year_variation)
+            self.assertTrue(summary.has_within_gkz_variation)
+            self.assertEqual(summary.treatment_transitions, 2)
+            diagnostics = read_csv(summary.diagnostics_output)
+            self.assertEqual(diagnostics[1]["exposure_regional_municipalities"], "1")
+            self.assertEqual(diagnostics[1]["regional_bundesland_codes"], "1")
+            audit = {
+                (row["gkz"], row["year"]): row
+                for row in read_csv(summary.audit_output)
+            }
+            row = audit[("10101", "2002")]
+            self.assertEqual(row["regional_exposure"], "1")
+            self.assertEqual(row["regional_added_exposure"], "1")
+            self.assertEqual(row["exposure_reasons"], "regional:state")
+            self.assertEqual(row["positive_source_ids"], "final-decision")
 
 
 if __name__ == "__main__":

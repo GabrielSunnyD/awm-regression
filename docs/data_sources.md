@@ -27,8 +27,9 @@ The complete command:
    statuses, participant legal status, and geographic codes;
 4. derives the 2024 municipality universe and historical-GKZ crosswalk;
 5. resolves reviewed municipality evidence into normalized `data/raw` tables;
-6. excludes all non-accepted procurement rows; and
-7. builds the 2001–2024 long panel, wide exposure matrix, and audit.
+6. excludes all non-accepted procurement rows;
+7. normalizes final, eligible regional operating rules; and
+8. builds the 2001–2024 long panel, wide exposure matrix, and audit.
 
 For diagnosis, run the stages separately:
 
@@ -195,6 +196,38 @@ is retained as a discoverable pending/admitted case but is ineligible.
 `participant_aliases.csv` contains source-backed legal and historical names for
 TED matching. Aliases generate candidates only; they never join directly to
 the exposure panel.
+
+## Regional operating rules
+
+`regional_exposure.csv` is the reviewed input for the preliminary broad proxy.
+Each row names a supported geographic unit (`state`), its one-digit GKZ prefix,
+an inclusive operating interval, legal status, eligibility, and source. The
+current ten interval rows summarize dated project-table evidence from the final
+FCC Cartel Court decision. A project is propagated to its Bundesland only in
+its stated calendar year; consecutive intervals are used only when at least
+one qualifying project is documented in every year. Normalization copies
+reviewed rows without expanding dates; `pipeline.py` performs the exact
+state-prefix/year intersection.
+
+`data/sources/review/regional_evidence_review.csv` contains all accepted,
+pending, and rejected candidates with locators and review metadata.
+`participant_bundesland_year_coverage.csv` provides the complete participant ×
+Bundesland × relevant-year search matrix. A `not_verified` cell is a research
+gap, not evidence of non-exposure.
+
+Accepted regional rows require a stable evidence ID, participant, publisher,
+document title, access and review dates, exact project-table locator,
+proposition, evidence type, reviewer, and coding rationale. Validation rejects
+missing locators, unsupported state codes, non-ISO dates, duplicate evidence
+IDs, unknown participants, and eligible non-final periods.
+
+This is researcher inference plus an explicit preliminary project assumption,
+not a court finding that every GKZ in those states purchased cartelized
+services. Vienna and Vorarlberg are deliberately not filled from a generic
+"nationwide infringement" description. Adding a state requires corresponding
+official evidence of operating geography and dates, not a company address,
+facility, isolated project outside a supported regional pattern, or present-day
+website.
 
 ## Procurement candidates and accepted contracts
 

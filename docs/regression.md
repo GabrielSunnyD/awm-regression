@@ -38,11 +38,27 @@ The default exposure input is the existing long output:
 data/processed/municipality_year_exposure.csv
 ```
 
-It must contain one row per key with:
+This file now uses the preliminary regional specification: the union of
+direct, accepted-contract, dated-association, and final source-backed state
+operating-presence channels. A regional positive means that operating presence
+was applied to every GKZ in a supported state; it does not establish a
+municipal contract or damages. Inspect the audit's separate channel flags,
+compare against the narrow three-channel indicators, and do not estimate this
+model if the exposure CLI warns that the broad indicator is absorbed by GKZ or
+year fixed effects.
+
+It contains one row per key with:
 
 ```text
-gkz,year,exposure,data_found
+gkz,year,exposure_direct,exposure_regional,exposure,exposure_basis,data_found,data_found_direct,data_found_regional
 ```
+
+The default `--exposure-column exposure` uses the union. Select
+`exposure_direct` or `exposure_regional` explicitly for robustness analysis.
+Each selection uses its matching `data_found*` flag, preventing evidence for
+one component from turning an unknown zero in the other into a clean control.
+The loader also accepts the legacy four-column panel and validates the union
+identity whenever all three exposure columns are present.
 
 By default, only `data_found=true` rows are eligible for estimation. The
 exposure pipeline defines `data_found=false, exposure=0` as unknown evidence

@@ -4,7 +4,7 @@ This project builds an auditable Austrian municipality-year panel in long
 form:
 
 ```text
-gkz,year,exposure,data_found
+gkz,year,exposure_direct,exposure_regional,exposure,exposure_basis,data_found,...
 ```
 
 The default output crosses every municipality in Statistics Austria's
@@ -18,14 +18,26 @@ column per year:
 gkz,municipality_name,2001,...,2024
 ```
 
-For municipality \(i\) and year \(t\), `exposure=1` when at least one reviewed
-source supports:
+`exposure_direct` is the union of the first three narrow rules below;
+`exposure_regional` is the fourth preliminary rule; and `exposure` is their
+maximum:
 
 1. direct municipality evidence overlapping \(t\);
 2. an accepted municipality–supplier contract overlapping both \(t\) and that
    participant's eligible final infringement period; or
 3. dated association membership overlapping both \(t\) and a reviewed
-   association-exposure interval.
+   association-exposure interval; or
+4. the municipality's state overlapping a final, eligible, source-backed
+   regional cartel-operation interval.
+
+The fourth channel is deliberately broad but time-limited. A dated FCC project
+exposes every 2024-geography GKZ in the project's Bundesland only for the
+documented year or consecutive documented years. It is never extended over
+FCC's entire infringement period from one isolated project. The accepted rules
+currently cover specific years in Carinthia, Lower Austria, Salzburg, and
+Styria; the other five states remain unverified. They do **not** infer scope
+from an address or facility and do not claim that every coded municipality was
+a customer or suffered damage.
 
 All interval tests require at least one shared calendar day. Exposure is never
 carried into another year merely because a municipality was exposed once.
@@ -47,12 +59,18 @@ explicitly marked `citation_only`, validates both acquisition paths, constructs
 the historical-GKZ crosswalk and normalized inputs, then builds:
 
 - `data/processed/municipality_year_exposure.csv`;
-- `data/processed/municipality_year_exposure_wide.csv`; and
-- `data/processed/municipality_year_exposure_audit.csv`.
+- `data/processed/municipality_year_exposure_wide.csv`;
+- `data/processed/municipality_year_exposure_audit.csv`; and
+- `data/processed/municipality_year_exposure_diagnostics.csv`.
 
 The wide file is an exposure-only convenience view. Use the long file when an
 analysis must distinguish evidence-supported zeroes from default zeroes with
 `data_found`.
+
+The long panel also carries `data_found_direct` and `data_found_regional` so a
+direct-only regression does not treat a regional-only finding as proof of a
+clean direct zero (and vice versa). `data_found` is the combined-specification
+coverage flag retained for backward compatibility.
 
 Useful variants are:
 
@@ -81,8 +99,12 @@ fixed effects:
 
 ```bash
 uv run awm-regress \
+  --exposure-column exposure \
   --input-csv path/to/regression_input.csv
 ```
+
+Use `--exposure-column exposure_direct` or `exposure_regional` for the two
+component robustness specifications.
 
 The input has one row per GKZ-year. `gkz`, `year`, and `expenditure` are
 required; every additional column is a time-varying control:
@@ -144,6 +166,7 @@ The generated normalized tables are:
 | `municipality_crosswalk.csv` | Official historical-to-2024 GKZ mappings |
 | `direct_evidence.csv` | Dated municipality findings |
 | `cartel_periods.csv` | Participant period, legal status, eligibility, and region |
+| `regional_exposure.csv` | Dated, locator-backed Bundesland project evidence for the preliminary proxy |
 | `contracts.csv` | Manually accepted municipality–supplier contracts |
 | `association_exposure.csv` | Dated association findings |
 | `association_memberships.csv` | Dated municipal membership intervals |
@@ -173,10 +196,12 @@ outside a participant's coded geographic scope does not trigger the contract
 rule. A contract still sets `data_found=true` for its performance years,
 because the municipality-year was evaluated.
 
-The FCC project-table review inventory records every municipality- or
-association-like entry considered during extraction as `accepted`, `pending`,
-or `excluded`. Broad district references, private customers, wastewater, and
-facilities with unresolved service scope remain outside treatment.
+The regional research ledger records all 33 FCC project candidates: 29 are
+accepted for their stated Bundesland-year, one facility row is pending, and
+three private-customer or wastewater rows are rejected. District references
+can support only the broad Bundesland proxy, never direct municipality
+exposure. The participant-by-Bundesland-year matrix records unverified cells
+as research gaps rather than zeroes.
 
 ## `data_found` and current coverage
 
@@ -195,7 +220,8 @@ municipality by the project-wide post-raid non-exposure rule. Default zeroes in
 2001–2021 remain unknown coverage, not confirmed clean controls. Public court
 project lists are illustrative rather than exhaustive.
 
-The current official-source build contains:
+The last narrow official-source build, retained as a comparison baseline,
+contained:
 
 - 50,232 balanced panel rows;
 - 650 historical crosswalk rows;
@@ -208,6 +234,18 @@ The expansion is driven mainly by dated legal membership records for all 19
 GABL and 15 AWS Schwechat members at the corresponding FCC project years.
 `contracts.csv` remains empty because no procurement candidate has yet passed
 manual acceptance.
+
+Those counts predate the regional specification and must not be quoted as its
+output. The CLI calculates and reports the regional additions from the actual
+official municipality snapshot on every build.
+
+The current review inventory contains 29 accepted, one pending, and three
+rejected regional candidates, all from the already registered FCC decision.
+No additional source was accepted during the 2026-08-14 re-review because the
+execution network blocked the Austrian official-source hosts. The protected
+BWB participant pages and unverified participant-state-years remain outside
+regional treatment rather than being inferred from snippets or prior scope
+summaries.
 
 ## Territorial interpretation
 

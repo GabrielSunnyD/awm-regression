@@ -18,6 +18,7 @@ from awm_exposure.sources import (
     build_raw_data,
     download_sources,
     validate_sources,
+    _validate_curated_row,
 )
 
 
@@ -100,6 +101,30 @@ def write_admin_changes_zip(
 
 
 class SourcePipelineTests(unittest.TestCase):
+    def test_regional_evidence_requires_locator_dates_and_supported_state(self) -> None:
+        path = Path("regional_exposure.csv")
+        row = {
+            "_line": "2", "evidence_id": "regional-1",
+            "participant_id": "firm", "evidence_type": "cartel_project",
+            "publisher": "Court", "document_title": "Decision",
+            "accessed_at": "2026-08-14", "locator": "",
+            "proposition": "Dated project", "review_status": "accepted",
+            "reviewer": "codex_research_agent", "reviewed_at": "2026-08-14",
+            "rationale": "Qualifying project", "legal_status": "final",
+            "eligible_for_exposure": "1", "region_type": "state",
+            "region_code": "3",
+        }
+        with self.assertRaisesRegex(SourceDataError, "missing locator"):
+            _validate_curated_row("regional_exposure.csv", row, path)
+        row["locator"] = "Project table row 1"
+        row["region_code"] = "10"
+        with self.assertRaisesRegex(SourceDataError, "one-digit GKZ prefix"):
+            _validate_curated_row("regional_exposure.csv", row, path)
+        row["region_code"] = "3"
+        row["reviewed_at"] = "not-a-date"
+        with self.assertRaisesRegex(SourceDataError, "reviewed_at"):
+            _validate_curated_row("regional_exposure.csv", row, path)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -227,6 +252,39 @@ class SourcePipelineTests(unittest.TestCase):
                     "source_id": "court",
                 }
             ],
+        )
+        write_csv(
+            self.curated / "regional_exposure.csv",
+            [
+                "evidence_id", "region_type", "region_code", "region_name",
+                "exposure_start", "exposure_end", "legal_status",
+                "eligible_for_exposure", "participant_id", "evidence_type",
+                "source_id", "publisher", "document_title", "publication_date",
+                "accessed_at", "locator", "proposition", "review_status",
+                "reviewer", "reviewed_at", "rationale", "source_url", "notes",
+            ],
+            [],
+        )
+        write_csv(
+            self.sources / "review" / "regional_evidence_review.csv",
+            [
+                "candidate_id", "source_id", "source_url", "publisher",
+                "document_title", "publication_date", "accessed_at", "locator",
+                "source_year", "candidate_name", "bundesland", "region_code",
+                "participant_id", "evidence_type", "supported_start",
+                "supported_end", "review_status", "reviewer", "reviewed_at",
+                "proposition", "coding_resolution", "rationale", "notes",
+            ],
+            [],
+        )
+        write_csv(
+            self.sources / "review" / "participant_bundesland_year_coverage.csv",
+            [
+                "participant_id", "participant_name", "year", "region_code",
+                "bundesland", "participant_legal_status", "participant_eligible",
+                "coverage_status", "source_id", "reviewed_at", "notes",
+            ],
+            [],
         )
         write_csv(
             self.curated / "contracts.csv",
@@ -440,6 +498,31 @@ class SourcePipelineTests(unittest.TestCase):
         self.assertEqual(validation.registered_sources, 3)
         self.assertEqual(validation.verified_downloads, 3)
         self.assertEqual(validation.citation_only_sources, 0)
+
+        regional_fields = (
+            Path(__file__).resolve().parents[1]
+            / "data/input_templates/regional_exposure.csv"
+        )
+        with regional_fields.open(encoding="utf-8", newline="") as handle:
+            fields = next(csv.reader(handle))
+        regional = {
+            "evidence_id": "duplicate", "region_type": "state",
+            "region_code": "3", "region_name": "Lower Austria",
+            "participant_id": "firm", "exposure_start": "2019",
+            "exposure_end": "2019", "evidence_type": "cartel_project",
+            "legal_status": "final", "eligible_for_exposure": "1",
+            "source_id": "court", "publisher": "Court",
+            "document_title": "Decision", "accessed_at": "2026-08-14",
+            "locator": "Project table row", "proposition": "Dated project",
+            "review_status": "accepted", "reviewer": "codex_research_agent",
+            "reviewed_at": "2026-08-14", "rationale": "Qualifying project",
+        }
+        write_csv(
+            self.curated / "regional_exposure.csv", fields, [regional, regional]
+        )
+        with self.assertRaisesRegex(SourceDataError, "duplicate evidence_id"):
+            validate_sources(self.sources)
+        write_csv(self.curated / "regional_exposure.csv", fields, [])
 
         (self.sources / "downloads/court.html").write_text(
             "<html>tampered</html>", encoding="utf-8"

@@ -73,6 +73,7 @@ _GKZ = re.compile(r"^\d{5}$")
 _YEAR = re.compile(r"^\d{4}$")
 _MISSING_VALUES = {"", ".", "na", "n/a", "nan", "null"}
 _CLUSTER_OPTIONS = {"gkz", "gkz-year", "none"}
+_EXPOSURE_COLUMNS = {"exposure", "exposure_direct", "exposure_regional"}
 _RESERVED_CONTROL_NAMES = {
     "gkz",
     "year",
@@ -189,11 +190,22 @@ def _require_columns(path: Path, fields: Sequence[str], required: set[str]) -> N
 
 def _read_exposure(
     path: Path,
+    *,
+    exposure_column: str = "exposure",
 ) -> tuple[dict[tuple[str, int], _ExposureValue], bool]:
     fields, rows = _read_rows(path)
-    _require_columns(path, fields, {"gkz", "year", "exposure"})
+    if exposure_column not in _EXPOSURE_COLUMNS:
+        raise RegressionInputError(
+            "exposure_column must be exposure, exposure_direct, or "
+            "exposure_regional"
+        )
+    _require_columns(path, fields, {"gkz", "year", exposure_column})
     has_data_found = "data_found" in fields
-    allowed = {"gkz", "year", "exposure", "data_found"}
+    allowed = {
+        "gkz", "year", "exposure", "exposure_direct", "exposure_regional",
+        "exposure_basis", "data_found", "data_found_direct",
+        "data_found_regional",
+    }
     unexpected = sorted(set(fields) - allowed)
     if unexpected:
         raise RegressionInputError(
@@ -211,14 +223,38 @@ def _read_exposure(
             raise RegressionInputError(
                 f"{context}: duplicate exposure row for GKZ {key[0]}, year {key[1]}"
             )
-        exposure = _parse_number(row["exposure"], context, optional=False)
+        exposure = _parse_number(row[exposure_column], context, optional=False)
         assert exposure is not None
         if exposure not in {0.0, 1.0}:
             raise RegressionInputError(
                 f"{context}: exposure must be binary (0 or 1), got {exposure}"
             )
+        if {"exposure", "exposure_direct", "exposure_regional"}.issubset(fields):
+            combined = _parse_number(row["exposure"], context, optional=False)
+            direct = _parse_number(row["exposure_direct"], context, optional=False)
+            regional = _parse_number(
+                row["exposure_regional"], context, optional=False
+            )
+            if any(value not in {0.0, 1.0} for value in (combined, direct, regional)):
+                raise RegressionInputError(
+                    f"{context}: all exposure columns must be binary"
+                )
+            if combined != max(direct, regional):
+                raise RegressionInputError(
+                    f"{context}: exposure must equal max(exposure_direct, "
+                    "exposure_regional)"
+                )
+        selected_data_found = {
+            "exposure": "data_found",
+            "exposure_direct": "data_found_direct",
+            "exposure_regional": "data_found_regional",
+        }[exposure_column]
+        if selected_data_found not in fields:
+            selected_data_found = "data_found"
         data_found = (
-            _parse_bool(row["data_found"], context) if has_data_found else None
+            _parse_bool(row[selected_data_found], context)
+            if selected_data_found in fields
+            else None
         )
         if exposure == 1.0 and data_found is False:
             raise RegressionInputError(
@@ -476,6 +512,7 @@ def run_regression(
     include_unknown_exposure: bool = False,
     cluster: str = "gkz",
     confidence_level: float = 0.95,
+    exposure_column: str = "exposure",
 ) -> RegressionSummary:
     """Join inputs and estimate expenditure on exposure, controls, and FE.
 
@@ -494,7 +531,9 @@ def run_regression(
     input_path = Path(input_csv)
     destination = Path(output_dir)
 
-    exposure_values, has_data_found = _read_exposure(exposure_path)
+    exposure_values, has_data_found = _read_exposure(
+        exposure_path, exposure_column=exposure_column
+    )
     if not has_data_found and not include_unknown_exposure:
         raise RegressionInputError(
             f"{exposure_path} has no data_found column. Rebuild the standard long "

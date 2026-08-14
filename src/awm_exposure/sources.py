@@ -88,6 +88,31 @@ RAW_SCHEMAS: dict[str, list[str]] = {
         "source_url",
         "notes",
     ],
+    "regional_exposure.csv": [
+        "evidence_id",
+        "region_type",
+        "region_code",
+        "region_name",
+        "exposure_start",
+        "exposure_end",
+        "legal_status",
+        "eligible_for_exposure",
+        "participant_id",
+        "evidence_type",
+        "source_id",
+        "publisher",
+        "document_title",
+        "publication_date",
+        "accessed_at",
+        "locator",
+        "proposition",
+        "review_status",
+        "reviewer",
+        "reviewed_at",
+        "rationale",
+        "source_url",
+        "notes",
+    ],
     "contracts.csv": [
         "gkz",
         "participant_id",
@@ -146,6 +171,27 @@ _CURATED_SCHEMAS: dict[str, set[str]] = {
         "gkz_prefixes",
         "source_id",
     },
+    "regional_exposure.csv": {
+        "evidence_id",
+        "region_type",
+        "region_code",
+        "exposure_start",
+        "exposure_end",
+        "legal_status",
+        "eligible_for_exposure",
+        "source_id",
+        "participant_id",
+        "evidence_type",
+        "publisher",
+        "document_title",
+        "accessed_at",
+        "locator",
+        "proposition",
+        "review_status",
+        "reviewer",
+        "reviewed_at",
+        "rationale",
+    },
     "contracts.csv": {
         "municipality_name",
         "participant_id",
@@ -185,6 +231,22 @@ _SUPPORT_SCHEMAS: dict[str, set[str]] = {
         "disposition",
         "target_id",
         "source_id",
+    },
+}
+
+_RESEARCH_SCHEMAS: dict[str, set[str]] = {
+    "review/regional_evidence_review.csv": {
+        "candidate_id", "source_id", "source_url", "publisher",
+        "document_title", "accessed_at", "locator", "source_year",
+        "candidate_name", "bundesland", "region_code", "participant_id",
+        "evidence_type", "supported_start", "supported_end", "review_status",
+        "reviewer", "reviewed_at", "proposition", "coding_resolution",
+        "rationale",
+    },
+    "review/participant_bundesland_year_coverage.csv": {
+        "participant_id", "year", "region_code", "bundesland",
+        "participant_legal_status", "participant_eligible", "coverage_status",
+        "source_id", "reviewed_at",
     },
 }
 
@@ -578,6 +640,17 @@ def validate_sources(sources_dir: Path | str) -> ValidationSummary:
     for filename, required in _CURATED_SCHEMAS.items():
         path = sources_dir / "curated" / filename
         rows = _read_csv(path, required)
+        if filename == "regional_exposure.csv":
+            evidence_ids = [row["evidence_id"] for row in rows]
+            duplicates = sorted(
+                evidence_id
+                for evidence_id in set(evidence_ids)
+                if evidence_ids.count(evidence_id) > 1
+            )
+            if duplicates:
+                raise SourceDataError(
+                    f"{path}: duplicate evidence_id(s): {', '.join(duplicates)}"
+                )
         for row in rows:
             _validate_source(row, path, registry)
             _validate_curated_row(filename, row, path)
@@ -590,6 +663,15 @@ def validate_sources(sources_dir: Path | str) -> ValidationSummary:
             _CURATED_SCHEMAS["cartel_periods.csv"],
         )
     }
+    regional_path = sources_dir / "curated" / "regional_exposure.csv"
+    for row in _read_csv(
+        regional_path, _CURATED_SCHEMAS["regional_exposure.csv"]
+    ):
+        if row["participant_id"] not in participant_ids:
+            raise SourceDataError(
+                f"{regional_path}:{row['_line']}: unknown participant_id "
+                f"{row['participant_id']!r}"
+            )
     for row in _read_csv(
         sources_dir / "curated" / "contracts.csv",
         _CURATED_SCHEMAS["contracts.csv"],
@@ -630,6 +712,46 @@ def validate_sources(sources_dir: Path | str) -> ValidationSummary:
                 raise SourceDataError(
                     f"{path}:{row['_line']}: an accepted FCC review row "
                     "requires target_id"
+                )
+        curated_rows += len(rows)
+
+    for relative_path, required in _RESEARCH_SCHEMAS.items():
+        path = sources_dir / relative_path
+        rows = _read_csv(path, required)
+        identifiers: set[str] = set()
+        for row in rows:
+            _validate_source(row, path, registry)
+            if row["participant_id"] not in participant_ids:
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: unknown participant_id "
+                    f"{row['participant_id']!r}"
+                )
+            identifier = row.get("candidate_id", "") or "|".join(
+                (row["participant_id"], row["region_code"], row["year"])
+            )
+            if identifier in identifiers:
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: duplicate research record "
+                    f"{identifier!r}"
+                )
+            identifiers.add(identifier)
+            if row["region_code"] not in "123456789" or len(row["region_code"]) != 1:
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: unsupported Bundesland code"
+                )
+            try:
+                date.fromisoformat(row["reviewed_at"])
+                if row.get("accessed_at"):
+                    date.fromisoformat(row["accessed_at"])
+            except ValueError as exc:
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: review/access dates must be YYYY-MM-DD"
+                ) from exc
+            if "candidate_id" in row and row["review_status"] not in {
+                "accepted", "pending", "rejected"
+            }:
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: invalid research review_status"
                 )
         curated_rows += len(rows)
 
@@ -755,7 +877,7 @@ def _validate_curated_row(
     an unreviewed procurement candidate from silently entering treatment.
     """
 
-    if filename == "cartel_periods.csv":
+    if filename in {"cartel_periods.csv", "regional_exposure.csv"}:
         status = row["legal_status"]
         if status not in _LEGAL_STATUSES:
             raise SourceDataError(
@@ -767,7 +889,7 @@ def _validate_curated_row(
         )
         if status != "final" and eligible:
             raise SourceDataError(
-                f"{path}:{row['_line']}: a non-final participant period "
+                f"{path}:{row['_line']}: a non-final exposure period "
                 "cannot be eligible_for_exposure"
             )
         prefixes = [
@@ -775,14 +897,58 @@ def _validate_curated_row(
             for prefix in row.get("gkz_prefixes", "").split("|")
             if prefix.strip()
         ]
-        if len(prefixes) != len(set(prefixes)) or any(
-            len(prefix) != 1 or prefix not in "123456789"
-            for prefix in prefixes
-        ):
+        invalid_prefixes = len(prefixes) != len(set(prefixes)) or any(
+            len(prefix) != 1 or prefix not in "123456789" for prefix in prefixes
+        )
+        if filename == "cartel_periods.csv" and invalid_prefixes:
             raise SourceDataError(
                 f"{path}:{row['_line']}: gkz_prefixes must be unique "
                 "one-digit state prefixes separated by |"
             )
+        if filename == "regional_exposure.csv":
+            required_metadata = (
+                "evidence_id",
+                "participant_id",
+                "evidence_type",
+                "publisher",
+                "document_title",
+                "accessed_at",
+                "locator",
+                "proposition",
+                "reviewer",
+                "reviewed_at",
+                "rationale",
+            )
+            missing = [field for field in required_metadata if not row[field].strip()]
+            if missing:
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: accepted regional evidence is "
+                    f"missing {', '.join(missing)}"
+                )
+            if row["review_status"] != "accepted":
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: curated regional evidence must "
+                    "have review_status=accepted"
+                )
+            for field in ("accessed_at", "reviewed_at"):
+                try:
+                    date.fromisoformat(row[field])
+                except ValueError as exc:
+                    raise SourceDataError(
+                        f"{path}:{row['_line']}: {field} must be YYYY-MM-DD"
+                    ) from exc
+            if row["region_type"] != "state":
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: region_type must be state"
+                )
+            if (
+                len(row["region_code"]) != 1
+                or row["region_code"] not in "123456789"
+            ):
+                raise SourceDataError(
+                    f"{path}:{row['_line']}: state region_code must be a "
+                    "one-digit GKZ prefix"
+                )
 
     if filename == "contracts.csv":
         status = row["review_status"]

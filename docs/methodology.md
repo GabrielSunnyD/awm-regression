@@ -18,7 +18,7 @@ canonical analytical output because it retains `data_found`.
 For 2024-geography municipality \(i\) and calendar year \(t\):
 
 \[
-E_{it}=\max(D_{it},C_{it},A_{it}),
+E^{regional}_{it}=\max(D_{it},C_{it},A_{it},R_{it}),
 \]
 
 where:
@@ -27,6 +27,11 @@ where:
 - \(C_{it}\) is an accepted municipality contract intersecting an eligible
   final participant period in a supported region; and
 - \(A_{it}\) is dated association exposure intersecting dated membership.
+- \(R_{it}\) is a broad state-level operating-presence proxy.
+
+The three-channel quantity \(E^{narrow}_{it}=\max(D_{it},C_{it},A_{it})\)
+remains visible in the channel-specific audit fields. The public `exposure`
+column now uses the named preliminary regional specification.
 
 This is an evidence classification, not an estimate of damages or cartel
 intensity.
@@ -170,6 +175,38 @@ An association exposure does not automatically apply to an entire district,
 to municipalities merely served by a facility, or to current members with no
 historical support.
 
+## Preliminary regional rule
+
+\(R_{it}=1\) when an eligible `regional_exposure.csv` row has
+`region_type=state`, its one-digit `region_code` equals the first digit of the
+five-digit GKZ, and its inclusive operating interval overlaps year \(t\) by at
+least one day. Only final findings can be eligible; pending/admitted matters
+are rejected if marked eligible.
+
+The accepted rules are derived from dated FCC decision project-table rows.
+They cover Lower Austria in 2004, 2011, and 2013–2020; Carinthia in 2010–2012,
+2014, and 2018; Styria in 2008, 2013, and 2015–2019; and Salzburg in 2009.
+Each project establishes regional exposure only for its documented year. An
+interval is used only where qualifying rows cover every constituent year. The
+rules therefore do not extend a single project over FCC's July 2002–March 2021
+infringement period.
+
+Applying a documented project to every GKZ in its Bundesland is the explicit
+preliminary assumption, not source text saying every municipality contracted
+with FCC. Burgenland, Upper Austria, Tirol, Vorarlberg, and Vienna remain
+unverified. Protected BWB pages and participant-level territorial summaries
+are retained in the coverage ledger but do not create regional treatment
+without a verified, adequately dated qualifying activity source.
+
+The audit reports `regional_exposure`, `regional_added_exposure`,
+`regional_rules`, and the precise positive `source_id`. The CLI reports how
+many municipality-years and municipalities the channel adds and warns if the
+result lacks within-year or within-GKZ variation. The generated diagnostics
+table reports annual exposed municipality counts and shares for direct,
+regional, and combined definitions, exposed Bundesland codes, universal years,
+and within-year variation. The CLI additionally reports GKZ transitions and
+the combined indicator's variance remaining after year effects.
+
 ## `data_found`
 
 Coverage is calculated separately for each GKZ-year:
@@ -179,8 +216,15 @@ Coverage is calculated separately for each GKZ-year:
   of whether the participant gate is positive; and
 - association evidence sets coverage only where a dated membership and an
   evaluated association interval overlap; and
+- an eligible regional rule sets coverage for every GKZ in its state and
+  overlapping years; and
 - the project-wide post-raid rule sets coverage for every municipality in each
   full calendar year from 2022 onward.
+
+The long output records this as three flags: `data_found_direct` for the three
+narrow channels, `data_found_regional` for the state channel, and `data_found`
+for their union. The regression loader automatically pairs a selected exposure
+column with its corresponding coverage flag.
 
 | exposure | data_found | Interpretation |
 |---:|:---:|---|
@@ -191,10 +235,10 @@ Coverage is calculated separately for each GKZ-year:
 
 The audit preserves rule flags, source IDs, evaluated row counts,
 `data_found_reasons`, and an explicit `post_raid_non_exposure` flag. Positive
-evidence wins across the three municipality channels, but a positive after
+evidence wins across the four channels, but a positive after
 2021 is invalid because it contradicts the project-wide non-exposure period.
 
-The present build has 130 exposed rows and 6,409 rows with data. Of those,
+The last narrow build had 130 exposed rows and 6,409 rows with data. Of those,
 6,279 are post-raid zeroes: 2,093 municipalities in each of 2022–2024. These
 rows establish the treatment state after the cartel, but they do not create a
 cross-sectional comparison group during the cartel period. Restricting a
@@ -262,9 +306,9 @@ does not solve the selective-coverage problem described above. See
 [`regression.md`](regression.md) for the estimator, input schemas, diagnostics,
 and additional identification requirements.
 
-## Current release
+## Narrow baseline
 
-The current default build contains:
+The last recorded narrow build contains:
 
 - 2,093 fixed-2024 GKZ units;
 - 24 years and 50,232 unique panel keys;
@@ -274,4 +318,7 @@ The current default build contains:
 - 6,409 rows with `data_found=true`, of which 6,279 are post-raid zeroes; and
 - zero accepted municipality-contract rows.
 
-These counts measure documented coding coverage, not the cartel's true reach.
+These counts are a comparison baseline, not the output of the preliminary
+regional specification. The CLI computes the regional additions and variation
+diagnostics from the actual official municipality snapshot on every build.
+All counts measure documented coding coverage, not the cartel's true reach.

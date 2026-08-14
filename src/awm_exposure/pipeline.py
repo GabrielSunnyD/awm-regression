@@ -2,7 +2,7 @@
 
 The classifier deliberately keeps legal/procurement interpretation outside the
 code.  Its job is narrower: validate reviewed evidence intervals, intersect
-them with calendar years, apply three documented exposure rules and the
+them with calendar years, apply four documented exposure rules and the
 project-wide post-raid non-exposure rule, and emit long and wide balanced
 panels.  A municipality is never carried forward merely because it was exposed
 once.
@@ -43,9 +43,16 @@ class BuildSummary:
     exposed_rows: int
     ever_exposed_municipalities: int
     with_data_rows: int
+    region_added_rows: int
+    region_added_municipalities: int
+    has_within_year_variation: bool
+    has_within_gkz_variation: bool
+    treatment_transitions: int
+    year_fe_residual_variance_share: float
     main_output: Path
     wide_output: Path
     audit_output: Path | None
+    diagnostics_output: Path
 
 
 @dataclass(frozen=True)
@@ -298,6 +305,7 @@ def build_exposure(
     contracts_path = input_dir / "contracts.csv"
     association_exposure_path = input_dir / "association_exposure.csv"
     memberships_path = input_dir / "association_memberships.csv"
+    regional_path = input_dir / "regional_exposure.csv"
 
     municipality_rows = _read_csv(
         municipalities_path, {"gkz"}, optional_file=False
@@ -339,15 +347,64 @@ def build_exposure(
         {"gkz", "association_id", "membership_start", "membership_end"},
         optional_file=True,
     )
+    regional_rows = _read_csv(
+        regional_path,
+        {
+            "region_type",
+            "region_code",
+            "exposure_start",
+            "exposure_end",
+            "legal_status",
+            "eligible_for_exposure",
+        },
+        optional_file=True,
+    )
 
     data_found: set[RowKey] = set()
     direct_positive: set[RowKey] = set()
     contract_positive: set[RowKey] = set()
     association_positive: set[RowKey] = set()
+    regional_positive: set[RowKey] = set()
     positive_sources: defaultdict[RowKey, list[str]] = defaultdict(list)
     direct_count: defaultdict[RowKey, int] = defaultdict(int)
     contract_count: defaultdict[RowKey, int] = defaultdict(int)
     association_count: defaultdict[RowKey, int] = defaultdict(int)
+    regional_count: defaultdict[RowKey, int] = defaultdict(int)
+
+    for row in regional_rows:
+        context = _context(regional_path, row)
+        if row["region_type"] != "state":
+            raise InputError(f"{context}: region_type must be state")
+        region_code = row["region_code"]
+        if len(region_code) != 1 or region_code not in "123456789":
+            raise InputError(
+                f"{context}: state region_code must be a one-digit GKZ prefix"
+            )
+        interval = _parse_interval(row, "exposure_start", "exposure_end", context)
+        status = row["legal_status"]
+        if status not in {"final", "pending_admitted"}:
+            raise InputError(
+                f"{context}: legal_status must be final or pending_admitted"
+            )
+        eligible = _parse_bool(row["eligible_for_exposure"], context)
+        if status != "final" and eligible:
+            raise InputError(
+                f"{context}: a non-final regional rule cannot be "
+                "eligible_for_exposure"
+            )
+        if not eligible:
+            continue
+        for gkz in universe:
+            if not gkz.startswith(region_code):
+                continue
+            for year in _overlapping_years([interval], start_year, end_year):
+                if not _overlaps_all(interval, _year_interval(year)):
+                    continue
+                key = (gkz, year)
+                regional_positive.add(key)
+                data_found.add(key)
+                regional_count[key] += 1
+                positive_sources[key].extend(_source_ids(row))
 
     for row in direct_rows:
         context = _context(direct_path, row)
@@ -481,7 +538,9 @@ def build_exposure(
             direct = key in direct_positive
             contract = key in contract_positive
             association = key in association_positive
-            exposed = direct or contract or association
+            regional = key in regional_positive
+            exposure_direct = direct or contract or association
+            exposed = exposure_direct or regional
             post_raid = year >= FIRST_FULL_POST_RAID_YEAR
             if post_raid and exposed:
                 raise InputError(
@@ -490,6 +549,10 @@ def build_exposure(
                     "dated evidence"
                 )
             found = key in data_found or post_raid
+            direct_found = bool(
+                direct_count[key] or contract_count[key] or association_count[key]
+            ) or post_raid
+            regional_found = bool(regional_count[key]) or post_raid
             if exposed and not found:  # Defensive assertion for future rule changes.
                 raise AssertionError(
                     f"Positive exposure without data_found for {gkz} in {year}"
@@ -497,23 +560,30 @@ def build_exposure(
             if exposed:
                 ever_exposed.add(gkz)
 
+            reasons = []
+            if direct:
+                reasons.append("direct:municipality")
+            if contract:
+                reasons.append("direct:contract")
+            if association:
+                reasons.append("direct:association")
+            if regional:
+                reasons.append("regional:state")
             main_row: dict[str, object] = {
                 "gkz": gkz,
                 "year": year,
+                "exposure_direct": int(exposure_direct),
+                "exposure_regional": int(regional),
                 "exposure": int(exposed),
+                "exposure_basis": "|".join(reasons),
             }
             if include_data_found:
                 main_row["data_found"] = str(found).lower()
+                main_row["data_found_direct"] = str(direct_found).lower()
+                main_row["data_found_regional"] = str(regional_found).lower()
             main_rows.append(main_row)
             wide_row[str(year)] = int(exposed)
 
-            reasons = []
-            if direct:
-                reasons.append("direct")
-            if contract:
-                reasons.append("contract")
-            if association:
-                reasons.append("association")
             data_found_reasons = []
             if direct_count[key]:
                 data_found_reasons.append("direct")
@@ -521,6 +591,8 @@ def build_exposure(
                 data_found_reasons.append("contract")
             if association_count[key]:
                 data_found_reasons.append("association")
+            if regional_count[key]:
+                data_found_reasons.append("regional")
             if post_raid:
                 data_found_reasons.append("post_raid")
             audit_rows.append(
@@ -530,9 +602,15 @@ def build_exposure(
                     "municipality_name": names[gkz],
                     "exposure": int(exposed),
                     "data_found": str(found).lower(),
+                    "data_found_direct": str(direct_found).lower(),
+                    "data_found_regional": str(regional_found).lower(),
                     "direct_exposure": int(direct),
                     "contract_exposure": int(contract),
                     "association_exposure": int(association),
+                    "regional_exposure": int(regional),
+                    "exposure_direct": int(exposure_direct),
+                    "exposure_regional": int(regional),
+                    "regional_added_exposure": int(regional and not exposure_direct),
                     "exposure_reasons": "|".join(reasons),
                     "data_found_reasons": "|".join(data_found_reasons),
                     "post_raid_non_exposure": int(post_raid),
@@ -540,14 +618,24 @@ def build_exposure(
                     "direct_rows": direct_count[key],
                     "contract_rows": contract_count[key],
                     "evaluated_association_memberships": association_count[key],
+                    "regional_rules": regional_count[key],
                 }
             )
         wide_rows.append(wide_row)
 
     main_output = output_dir / "municipality_year_exposure.csv"
-    main_fields = ["gkz", "year", "exposure"]
+    main_fields = [
+        "gkz",
+        "year",
+        "exposure_direct",
+        "exposure_regional",
+        "exposure",
+        "exposure_basis",
+    ]
     if include_data_found:
-        main_fields.append("data_found")
+        main_fields.extend(
+            ["data_found", "data_found_direct", "data_found_regional"]
+        )
     _write_csv_atomic(main_output, main_fields, main_rows)
 
     wide_output = output_dir / "municipality_year_exposure_wide.csv"
@@ -571,10 +659,16 @@ def build_exposure(
                 "year",
                 "municipality_name",
                 "exposure",
+                "exposure_direct",
+                "exposure_regional",
                 "data_found",
+                "data_found_direct",
+                "data_found_regional",
                 "direct_exposure",
                 "contract_exposure",
                 "association_exposure",
+                "regional_exposure",
+                "regional_added_exposure",
                 "exposure_reasons",
                 "data_found_reasons",
                 "post_raid_non_exposure",
@@ -582,10 +676,89 @@ def build_exposure(
                 "direct_rows",
                 "contract_rows",
                 "evaluated_association_memberships",
+                "regional_rules",
             ],
             audit_rows,
         )
 
+    diagnostic_rows: list[dict[str, object]] = []
+    for year in range(start_year, end_year + 1):
+        rows = [row for row in main_rows if row["year"] == year]
+        direct_total = sum(int(row["exposure_direct"]) for row in rows)
+        regional_total = sum(int(row["exposure_regional"]) for row in rows)
+        combined_total = sum(int(row["exposure"]) for row in rows)
+        exposed_states = sorted(
+            {str(row["gkz"])[0] for row in rows if row["exposure_regional"]}
+        )
+        diagnostic_rows.append(
+            {
+                "year": year,
+                "municipalities": len(rows),
+                "exposure_direct_municipalities": direct_total,
+                "exposure_regional_municipalities": regional_total,
+                "exposure_combined_municipalities": combined_total,
+                "regional_bundesland_codes": "|".join(exposed_states),
+                "regional_bundeslaender": len(exposed_states),
+                "direct_share": f"{direct_total / len(rows):.10f}",
+                "regional_share": f"{regional_total / len(rows):.10f}",
+                "combined_share": f"{combined_total / len(rows):.10f}",
+                "regional_universal": str(regional_total == len(rows)).lower(),
+                "combined_universal": str(combined_total == len(rows)).lower(),
+                "combined_within_year_variation": str(
+                    0 < combined_total < len(rows)
+                ).lower(),
+            }
+        )
+    diagnostics_output = output_dir / "municipality_year_exposure_diagnostics.csv"
+    _write_csv_atomic(
+        diagnostics_output,
+        [
+            "year",
+            "municipalities",
+            "exposure_direct_municipalities",
+            "exposure_regional_municipalities",
+            "exposure_combined_municipalities",
+            "regional_bundesland_codes",
+            "regional_bundeslaender",
+            "direct_share",
+            "regional_share",
+            "combined_share",
+            "regional_universal",
+            "combined_universal",
+            "combined_within_year_variation",
+        ],
+        diagnostic_rows,
+    )
+
+    exposure_by_year: defaultdict[int, set[int]] = defaultdict(set)
+    exposure_by_gkz: defaultdict[str, set[int]] = defaultdict(set)
+    exposure_sequence_by_gkz: defaultdict[str, list[int]] = defaultdict(list)
+    exposure_sum_by_year: defaultdict[int, int] = defaultdict(int)
+    for row in main_rows:
+        year = int(row["year"])
+        gkz = str(row["gkz"])
+        value = int(row["exposure"])
+        exposure_by_year[year].add(value)
+        exposure_by_gkz[gkz].add(value)
+        exposure_sequence_by_gkz[gkz].append(value)
+        exposure_sum_by_year[year] += value
+    added_keys = regional_positive - (
+        direct_positive | contract_positive | association_positive
+    )
+    transitions = 0
+    for values in exposure_sequence_by_gkz.values():
+        transitions += sum(left != right for left, right in zip(values, values[1:]))
+    exposure_values = [float(row["exposure"]) for row in main_rows]
+    grand_mean = sum(exposure_values) / len(exposure_values)
+    total_ss = sum((value - grand_mean) ** 2 for value in exposure_values)
+    year_means = {
+        year: exposure_sum_by_year[year] / len(universe)
+        for year in range(start_year, end_year + 1)
+    }
+    residual_ss = sum(
+        (float(row["exposure"]) - year_means[int(row["year"])]) ** 2
+        for row in main_rows
+    )
     return BuildSummary(
         municipalities=len(universe),
         years=end_year - start_year + 1,
@@ -593,7 +766,20 @@ def build_exposure(
         exposed_rows=sum(int(row["exposure"]) for row in main_rows),
         ever_exposed_municipalities=len(ever_exposed),
         with_data_rows=sum(row["data_found"] == "true" for row in audit_rows),
+        region_added_rows=len(added_keys),
+        region_added_municipalities=len({gkz for gkz, _ in added_keys}),
+        has_within_year_variation=any(
+            len(values) > 1 for values in exposure_by_year.values()
+        ),
+        has_within_gkz_variation=any(
+            len(values) > 1 for values in exposure_by_gkz.values()
+        ),
+        treatment_transitions=transitions,
+        year_fe_residual_variance_share=(
+            residual_ss / total_ss if total_ss else 0.0
+        ),
         main_output=main_output,
         wide_output=wide_output,
         audit_output=audit_output,
+        diagnostics_output=diagnostics_output,
     )

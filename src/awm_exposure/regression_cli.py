@@ -20,8 +20,18 @@ def make_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data/processed/municipality_year_exposure.csv"),
         help=(
-            "Long gkz,year,exposure,data_found panel "
+            "Canonical long panel with direct, regional, combined exposure, "
+            "and data_found (legacy gkz,year,exposure,data_found is accepted) "
             "(default: data/processed/municipality_year_exposure.csv)."
+        ),
+    )
+    parser.add_argument(
+        "--exposure-column",
+        choices=("exposure", "exposure_direct", "exposure_regional"),
+        default="exposure",
+        help=(
+            "Exposure specification from the canonical panel: combined "
+            "(exposure, default), direct-only, or regional-only."
         ),
     )
     parser.add_argument(
@@ -94,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             include_unknown_exposure=args.include_unknown_exposure,
             cluster=args.cluster,
             confidence_level=args.confidence_level,
+            exposure_column=args.exposure_column,
         )
     except RegressionInputError as exc:
         parser.error(str(exc))

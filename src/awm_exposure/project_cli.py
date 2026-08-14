@@ -150,6 +150,16 @@ def main(argv: list[str] | None = None) -> int:
             f"{panel.with_data_rows} rows with data."
         )
         print(f"Wide exposure matrix written to {panel.wide_output}.")
+        print(
+            f"Regional proxy adds {panel.region_added_rows} municipality-years "
+            f"across {panel.region_added_municipalities} municipalities; "
+            f"diagnostics written to {panel.diagnostics_output}."
+        )
+        print(
+            f"Combined exposure has {panel.treatment_transitions} GKZ treatment "
+            "transitions and a year-FE residual variance share of "
+            f"{panel.year_fe_residual_variance_share:.6f}."
+        )
     except (InputError, SourceDataError) as exc:
         parser.error(str(exc))
     return 0

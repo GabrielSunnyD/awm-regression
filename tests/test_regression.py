@@ -25,6 +25,55 @@ def read_csv(path: Path) -> list[dict[str, str]]:
 
 
 class RegressionPipelineTests(unittest.TestCase):
+    def test_loads_canonical_panel_and_selects_direct_specification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exposure, input_csv = self.make_exact_panel(root)
+            rows = read_csv(exposure)
+            for row in rows:
+                row["exposure_direct"] = row["exposure"]
+                row["exposure_regional"] = "0"
+                row["exposure_basis"] = (
+                    "direct:municipality" if row["exposure"] == "1" else ""
+                )
+                row["data_found_direct"] = row["data_found"]
+                row["data_found_regional"] = "false"
+            write_csv(
+                exposure,
+                [
+                    "gkz", "year", "exposure_direct", "exposure_regional",
+                    "exposure", "exposure_basis", "data_found",
+                    "data_found_direct", "data_found_regional",
+                ],
+                rows,
+            )
+            summary = run_regression(
+                exposure,
+                input_csv,
+                root / "output",
+                cluster="none",
+                exposure_column="exposure_direct",
+            )
+            self.assertAlmostEqual(summary.exposure_estimate, 3.0, places=9)
+
+            rows[0]["exposure"] = str(1 - int(rows[0]["exposure_direct"]))
+            write_csv(
+                exposure,
+                [
+                    "gkz", "year", "exposure_direct", "exposure_regional",
+                    "exposure", "exposure_basis", "data_found",
+                    "data_found_direct", "data_found_regional",
+                ],
+                rows,
+            )
+            with self.assertRaisesRegex(RegressionInputError, "must equal max"):
+                run_regression(
+                    exposure,
+                    input_csv,
+                    root / "invalid-output",
+                    exposure_column="exposure_direct",
+                )
+
     def make_exact_panel(
         self,
         root: Path,
