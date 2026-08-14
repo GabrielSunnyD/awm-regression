@@ -81,6 +81,26 @@ def main(argv: list[str] | None = None) -> int:
         f"{summary.with_data_rows} rows with data."
     )
     print(f"Wrote wide exposure output to {summary.wide_output}.")
+    print(
+        f"Regional proxy adds {summary.region_added_rows} municipality-years "
+        f"across {summary.region_added_municipalities} municipalities."
+    )
+    print(
+        f"Combined exposure has {summary.treatment_transitions} GKZ treatment "
+        "transitions; the share of total exposure variance remaining after "
+        f"year effects is {summary.year_fe_residual_variance_share:.6f}."
+    )
+    if not summary.has_within_year_variation:
+        print(
+            "WARNING: exposure has no within-year variation and is absorbed "
+            "by year fixed effects."
+        )
+    if not summary.has_within_gkz_variation:
+        print(
+            "WARNING: exposure has no within-GKZ variation and is absorbed "
+            "by GKZ fixed effects."
+        )
     if summary.audit_output is not None:
         print(f"Wrote audit output to {summary.audit_output}.")
+    print(f"Wrote exposure diagnostics to {summary.diagnostics_output}.")
     return 0

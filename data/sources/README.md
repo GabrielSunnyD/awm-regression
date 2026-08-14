@@ -50,6 +50,12 @@ eligible. A tender or generated TED match is not a contract: only a manually
 accepted row with municipality, supplier, performance interval, reviewer, and
 review date enters the normalized data.
 
+The preliminary `regional_exposure.csv` channel is broader: a final,
+source-backed state operating interval applies to every GKZ with that state
+prefix. Its notes must distinguish the source propositions from the project's
+regional-proxy assumption. Pending matters, addresses, facilities, and undated
+current web pages cannot create a regional rule.
+
 The panel-level post-raid rule is separate from municipality evidence. Since
 the registered BWB and participant findings end the documented cartel in March
 2021, all complete calendar years from 2022 onward are known non-exposed
