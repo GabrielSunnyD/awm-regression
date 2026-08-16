@@ -112,8 +112,8 @@ a positive contract or association rule in the same municipality-year.
 \(C_{it}=1\) only if all of the following are true:
 
 1. a contract row passed manual review and has `review_status=accepted`;
-2. the contract identifies municipality \(i\), a stable `participant_id`, and
-   a supported performance interval;
+2. the contract identifies municipality \(i\), the supplier, and a supported
+   performance interval;
 3. a participant-period row for the same ID is `final`;
 4. that period has `eligible_for_exposure=true`;
 5. the municipality's Austrian state prefix is in the period's supported
@@ -137,6 +137,17 @@ Its TED notices may appear in the candidate queue; they cannot create exposure.
 A verified contract sets `data_found=true` during its performance interval even
 if no eligible participant period overlaps. A participant finding by itself
 does not create municipality-level coverage.
+
+The accepted procurement ledger applies this distinction explicitly. TED
+award 086186-2019 confirms Seewalchen am Attersee's award to Vorwagner
+Kreislaufwirtschaft GmbH, while linked notice 490512-2018 fixes performance at
+2019-04-01 through 2022-03-31. Vorwagner is not mapped to a cartel participant,
+so the supported 2019--2021 rows are verified zeroes rather than default
+zeroes. Conversely, TED award 585514-2020 confirms Leibnitz's award to
+Saubermacher and linked notice 456603-2020 fixes performance at 2021-01-01
+through 2031-12-31; only its day-level overlap with Saubermacher's final
+eligible period makes 2021 positive. Later service years establish coverage
+but cannot create exposure outside that participant period.
 
 ## TED candidate rule
 
@@ -306,19 +317,26 @@ does not solve the selective-coverage problem described above. See
 [`regression.md`](regression.md) for the estimator, input schemas, diagnostics,
 and additional identification requirements.
 
-## Narrow baseline
+## Current generated counts and fixed-effects variation
 
-The last recorded narrow build contains:
+The 2026-08-16 registered-source build contains:
 
 - 2,093 fixed-2024 GKZ units;
 - 24 years and 50,232 unique panel keys;
 - 650 historical crosswalk rows;
-- 77 normalized evidence rows;
-- 130 exposed municipality-years;
-- 6,409 rows with `data_found=true`, of which 6,279 are post-raid zeroes; and
-- zero accepted municipality-contract rows.
+- 89 normalized evidence rows;
+- 8,512 combined exposed municipality-years, all pre-2022;
+- 14,794 combined rows with `data_found=true`;
+- before 2022, 8,512 combined exposed and 3 verified-unexposed rows;
+- before 2022, 131 direct-only exposed and 3 direct-verified-unexposed rows;
+- before 2022, 8,511 regional-only exposed and no region-verified-unexposed
+  rows; and
+- two accepted municipality-contract rows.
 
-These counts are a comparison baseline, not the output of the preliminary
-regional specification. The CLI computes the regional additions and variation
-diagnostics from the actual official municipality snapshot on every build.
-All counts measure documented coding coverage, not the cartel's true reach.
+Combined, direct-only, and regional-only exposure all retain variation after
+GKZ and year fixed effects. On the balanced 50,232-row panel their
+two-way-demeaned sums of squares are respectively 3,756.756, 112.976, and
+3,756.043 (strictly positive in every case). This is a collinearity diagnostic,
+not evidence that procurement review is representative or that the resulting
+coefficient has a causal interpretation. All counts measure documented coding
+coverage, not the cartel's true reach.
