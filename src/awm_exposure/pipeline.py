@@ -468,7 +468,10 @@ def build_exposure(
         context = _context(contracts_path, row)
         gkz = _normalize_gkz(row["gkz"], context)
         _check_known_gkz(gkz, universe, context)
-        participant_id = _require_identifier(row, "participant_id", context)
+        # A blank participant is an affirmative reviewed award to a supplier
+        # outside the eligible cartel roster.  It establishes coverage over
+        # the supported performance interval but can never trigger exposure.
+        participant_id = row.get("participant_id", "").strip()
         contract_interval = _parse_interval(
             row, "contract_start", "contract_end", context
         )

@@ -28,6 +28,48 @@ def read_csv(path: Path) -> list[dict[str, str]]:
 
 
 class ExposurePipelineTests(unittest.TestCase):
+    def test_reviewed_contract_positive_negative_and_interval_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "raw"
+            write_csv(
+                inputs / "municipalities.csv",
+                ["gkz"],
+                [{"gkz": "61053"}, {"gkz": "41739"}],
+            )
+            write_csv(
+                inputs / "cartel_periods.csv",
+                ["participant_id", "cartel_start", "cartel_end"],
+                [{"participant_id": "cartel-firm", "cartel_start": "2020", "cartel_end": "2021-03-31"}],
+            )
+            write_csv(
+                inputs / "contracts.csv",
+                ["gkz", "participant_id", "supplier_name", "contract_start", "contract_end", "source_id"],
+                [
+                    {"gkz": "61053", "participant_id": "cartel-firm", "supplier_name": "Cartel Firm", "contract_start": "2021-01-01", "contract_end": "2021-03-31", "source_id": "positive-award"},
+                    {"gkz": "41739", "participant_id": "", "supplier_name": "Other Supplier", "contract_start": "2019-04-01", "contract_end": "2021-03-31", "source_id": "negative-award"},
+                ],
+            )
+
+            summary = build_exposure(inputs, root / "processed", start_year=2018, end_year=2021)
+            audit = {(row["gkz"], row["year"]): row for row in read_csv(summary.audit_output)}
+            self.assertEqual(audit[("61053", "2021")]["contract_exposure"], "1")
+            self.assertEqual(audit[("41739", "2018")]["data_found"], "false")
+            for year in ("2019", "2020", "2021"):
+                self.assertEqual(audit[("41739", year)]["exposure"], "0")
+                self.assertEqual(audit[("41739", year)]["data_found"], "true")
+                self.assertEqual(audit[("41739", year)]["data_found_reasons"], "contract")
+
+    def test_contract_contradicting_full_post_raid_period_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "raw"
+            write_csv(inputs / "municipalities.csv", ["gkz"], [{"gkz": "61053"}])
+            write_csv(inputs / "cartel_periods.csv", ["participant_id", "cartel_start", "cartel_end"], [{"participant_id": "firm", "cartel_start": "2020", "cartel_end": "2022"}])
+            write_csv(inputs / "contracts.csv", ["gkz", "participant_id", "contract_start", "contract_end"], [{"gkz": "61053", "participant_id": "firm", "contract_start": "2022", "contract_end": "2022"}])
+            with self.assertRaisesRegex(InputError, "post-raid non-exposure"):
+                build_exposure(inputs, root / "processed", start_year=2022, end_year=2022)
+
     def test_builds_dated_panel_for_all_three_rules_and_unknown_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

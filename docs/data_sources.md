@@ -258,11 +258,14 @@ Review each candidate against the underlying notice. Confirm:
 5. the municipality maps to the intended 2024 GKZ; and
 6. the notice is registered and snapshotted under a stable `source_id`.
 
-Then add a row to `data/sources/curated/contracts.csv`. Example:
+Then add a row to `data/sources/curated/contracts.csv`. `supplier_name` is
+required. `participant_id` is blank only for an affirmatively verified award to
+a supplier outside the eligible participant roster; that row supplies coverage
+but cannot trigger exposure. Example:
 
 ```csv
-candidate_id,review_status,municipality_name,gkz,participant_id,contract_start,contract_end,source_id,source_url,reviewer,reviewed_at,notes
-ted:123456-2016:fcc_austria,accepted,Fischamend,,fcc_austria,2017-07-01,2020-06-30,ted_123456_2016,,Researcher Name,2026-07-30,"Award and performance period verified in sections X and Y."
+candidate_id,review_status,municipality_name,gkz,participant_id,supplier_name,contract_start,contract_end,source_id,source_url,reviewer,reviewed_at,notes
+ted:123456-2016:fcc_austria,accepted,Fischamend,,fcc_austria,FCC Austria Abfall Service AG,2017-07-01,2020-06-30,ted_123456_2016,,Researcher Name,2026-07-30,"Award and performance period verified in sections X and Y."
 ```
 
 Pending and rejected rows may remain in the curated table as a research log,

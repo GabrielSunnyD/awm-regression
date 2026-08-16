@@ -232,12 +232,33 @@ contained:
 
 The expansion is driven mainly by dated legal membership records for all 19
 GABL and 15 AWS Schwechat members at the corresponding FCC project years.
-`contracts.csv` remains empty because no procurement candidate has yet passed
-manual acceptance.
+The reviewed contract ledger now includes two pre-2022 municipal awards. A
+Leibnitz household-waste collection award to Saubermacher overlaps the final
+eligible participant period in January--March 2021. A Seewalchen am Attersee
+household-biowaste award to Vorwagner, a supplier outside the eligible roster,
+provides an affirmative verified zero for 2019--2021. Each award notice and the
+linked notice carrying its exact performance interval is separately registered
+and checksum-verified; an absent court-project entry is never used as evidence
+of non-exposure.
 
 Those counts predate the regional specification and must not be quoted as its
 output. The CLI calculates and reports the regional additions from the actual
 official municipality snapshot on every build.
+
+## Current generated coverage and variation
+
+The 2026-08-16 source build contains 50,232 balanced rows and 89 normalized
+evidence rows. Before the first full post-raid year (2001--2021), the combined
+preliminary regional specification has **8,512 exposed municipality-years**
+and **3 verified-unexposed municipality-years**. The direct-only specification
+has 131 exposed and the same 3 verified-unexposed rows; the regional-only
+specification has 8,511 exposed rows and no region-verified zeroes.
+
+All three measures retain variation after absorbing both GKZ and calendar-year
+fixed effects: the two-way-demeaned sums of squares are 3,756.756 (combined),
+112.976 (direct-only), and 3,756.043 (regional-only). This mechanical result
+does not make the selective evidence coverage causal or supply a clean control
+group.
 
 The current review inventory contains 29 accepted, one pending, and three
 rejected regional candidates, all from the already registered FCC decision.

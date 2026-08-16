@@ -116,6 +116,7 @@ RAW_SCHEMAS: dict[str, list[str]] = {
     "contracts.csv": [
         "gkz",
         "participant_id",
+        "supplier_name",
         "contract_start",
         "contract_end",
         "source_id",
@@ -195,6 +196,7 @@ _CURATED_SCHEMAS: dict[str, set[str]] = {
     "contracts.csv": {
         "municipality_name",
         "participant_id",
+        "supplier_name",
         "contract_start",
         "contract_end",
         "review_status",
@@ -962,7 +964,7 @@ def _validate_curated_row(
                 field
                 for field in (
                     "municipality_name",
-                    "participant_id",
+                    "supplier_name",
                     "contract_start",
                     "contract_end",
                     "reviewer",
