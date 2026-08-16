@@ -408,6 +408,68 @@ def _fixed_effect_rank(
     return gkz_count + year_count - components, components
 
 
+def _validate_within_feature_rank(
+    within_features: np.ndarray,
+    feature_names: Sequence[str],
+) -> int:
+    """Validate within-design rank and identify the variables responsible."""
+
+    if within_features.ndim != 2 or within_features.shape[1] != len(feature_names):
+        raise ValueError("within feature columns and feature names must align")
+
+    singular_values = np.linalg.svd(within_features, compute_uv=False)
+    largest = float(singular_values[0]) if len(singular_values) else 0.0
+    tolerance = max(within_features.shape) * np.finfo(np.float64).eps * largest
+    column_norms = np.linalg.norm(within_features, axis=0)
+    absorbed_indexes = np.flatnonzero(column_norms <= tolerance)
+    absorbed = [feature_names[int(index)] for index in absorbed_indexes]
+
+    retained_indexes = np.flatnonzero(column_norms > tolerance)
+    retained = within_features[:, retained_indexes]
+    collinear_groups: list[list[str]] = []
+    retained_rank = 0
+    if retained.shape[1]:
+        _, retained_values, right_vectors = np.linalg.svd(
+            retained, full_matrices=True
+        )
+        retained_rank = int(np.sum(retained_values > tolerance))
+        # Null vectors expose every member of a dependent combination, unlike a
+        # dropped-column report whose result depends on arbitrary column order.
+        for vector in right_vectors[retained_rank:]:
+            coefficient_cutoff = math.sqrt(np.finfo(np.float64).eps) * float(
+                np.max(np.abs(vector))
+            )
+            group = [
+                feature_names[int(retained_indexes[index])]
+                for index, coefficient in enumerate(vector)
+                if abs(float(coefficient)) > coefficient_cutoff
+            ]
+            if group and group not in collinear_groups:
+                collinear_groups.append(group)
+
+    if absorbed or retained_rank < retained.shape[1]:
+        diagnostics: list[str] = []
+        if absorbed:
+            diagnostics.append(
+                "individually absorbed by GKZ/year fixed effects (effectively "
+                f"zero within norm): {', '.join(absorbed)}"
+            )
+        if collinear_groups:
+            combinations = "; ".join(
+                ", ".join(group) for group in collinear_groups
+            )
+            diagnostics.append(
+                "jointly collinear after GKZ/year fixed effects: " + combinations
+            )
+        raise RegressionInputError(
+            "Within-transformed regressors are not identified; "
+            + ". ".join(diagnostics)
+            + ". No regressors were dropped."
+        )
+
+    return retained_rank
+
+
 def _cluster_covariance_component(
     x: np.ndarray,
     residuals: np.ndarray,
@@ -632,19 +694,11 @@ def run_regression(
     within_outcome = within[:, 0]
     within_features = within[:, 1:]
 
-    singular_values = np.linalg.svd(within_features, compute_uv=False)
-    largest = float(singular_values[0]) if len(singular_values) else 0.0
-    rank_tolerance = (
-        max(within_features.shape) * np.finfo(np.float64).eps * largest
+    feature_names = (exposure_column, *control_names)
+    feature_rank = _validate_within_feature_rank(
+        within_features, feature_names
     )
-    feature_rank = int(np.sum(singular_values > rank_tolerance))
-    feature_names = ("exposure", *control_names)
-    if feature_rank < len(feature_names):
-        raise RegressionInputError(
-            "Exposure and controls are rank deficient after GKZ/year fixed "
-            "effects. Remove constants, duplicate controls, or variables with "
-            "no within-GKZ variation."
-        )
+    singular_values = np.linalg.svd(within_features, compute_uv=False)
     within_total = float(within_outcome @ within_outcome)
     if within_total <= np.finfo(np.float64).eps * max(1.0, float(outcome @ outcome)):
         raise RegressionInputError(

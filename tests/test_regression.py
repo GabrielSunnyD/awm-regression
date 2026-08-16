@@ -304,25 +304,108 @@ class RegressionPipelineTests(unittest.TestCase):
             self.assertEqual(drops["singleton_fixed_effect"], 1)
             self.assertEqual(summary.municipalities, 7)
 
-    def test_rejects_rank_deficient_controls_after_fixed_effects(self) -> None:
+    def test_names_time_invariant_control_absorbed_by_fixed_effects(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             exposure, input_csv = self.make_exact_panel(root)
             rows = read_csv(input_csv)
             for row in rows:
-                row["population"] = "1"
+                row["stable_population"] = row["gkz"]
             write_csv(
                 input_csv,
-                ["gkz", "year", "expenditure", "population"],
+                [
+                    "gkz", "year", "expenditure", "population",
+                    "stable_population",
+                ],
                 rows,
             )
 
-            with self.assertRaisesRegex(RegressionInputError, "rank deficient"):
+            with self.assertRaises(RegressionInputError) as caught:
                 run_regression(
                     exposure,
                     input_csv,
                     root / "output",
                 )
+            message = str(caught.exception)
+            self.assertIn("individually absorbed", message)
+            self.assertIn("stable_population", message)
+
+    def test_names_both_duplicated_controls_as_jointly_collinear(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exposure, input_csv = self.make_exact_panel(root)
+            rows = read_csv(input_csv)
+            for row in rows:
+                row["population_copy"] = row["population"]
+            write_csv(
+                input_csv,
+                ["gkz", "year", "expenditure", "population", "population_copy"],
+                rows,
+            )
+
+            with self.assertRaises(RegressionInputError) as caught:
+                run_regression(exposure, input_csv, root / "output")
+            message = str(caught.exception)
+            self.assertIn("jointly collinear", message)
+            self.assertIn("population", message)
+            self.assertIn("population_copy", message)
+
+    def test_names_exposure_and_control_when_they_are_collinear(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exposure, input_csv = self.make_exact_panel(root)
+            exposure_by_key = {
+                (row["gkz"].lstrip("0"), row["year"]): row["exposure"]
+                for row in read_csv(exposure)
+            }
+            rows = read_csv(input_csv)
+            for row in rows:
+                row["exposure_proxy"] = exposure_by_key[(row["gkz"], row["year"])]
+            write_csv(
+                input_csv,
+                ["gkz", "year", "expenditure", "population", "exposure_proxy"],
+                rows,
+            )
+
+            with self.assertRaises(RegressionInputError) as caught:
+                run_regression(exposure, input_csv, root / "output")
+            message = str(caught.exception)
+            self.assertIn("jointly collinear", message)
+            self.assertIn("exposure", message)
+            self.assertIn("exposure_proxy", message)
+
+    def test_names_selected_exposure_absorbed_by_fixed_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exposure, input_csv = self.make_exact_panel(root)
+            rows = read_csv(exposure)
+            for row in rows:
+                value = int(row["gkz"][-1]) % 2
+                row.update(
+                    exposure_direct=value,
+                    exposure_regional=0,
+                    exposure=value,
+                    data_found_direct="true",
+                    data_found_regional="true",
+                    data_found="true",
+                )
+            fields = [
+                "gkz", "year", "exposure_direct", "exposure_regional",
+                "exposure", "data_found", "data_found_direct",
+                "data_found_regional",
+            ]
+            write_csv(exposure, fields, rows)
+
+            with self.assertRaises(RegressionInputError) as caught:
+                run_regression(
+                    exposure,
+                    input_csv,
+                    root / "output",
+                    exposure_column="exposure_direct",
+                )
+            message = str(caught.exception)
+            self.assertIn("individually absorbed", message)
+            self.assertIn("exposure_direct", message)
 
     def test_rejects_nonpositive_log_outcome_and_missing_expenditure_column(
         self,

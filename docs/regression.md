@@ -166,7 +166,15 @@ The command applies these rules in order:
 It then removes GKZ and year means through iterative two-way residualization,
 which is valid for unbalanced panels. The model fails rather than silently
 dropping a regressor when exposure or controls are collinear after fixed
-effects. The JSON metadata records mutually exclusive drop counts, fixed-effect
+effects. Its error first names variables with an effectively zero within norm
+(variables individually absorbed by the fixed effects), then names all members
+of dependent combinations among the remaining variables (joint collinearity,
+such as duplicated controls or an exposure-control identity). The diagnostic
+uses the estimator's numerical-rank tolerance and reports the selected exposure
+field by its actual name, for example `exposure_direct`, so the researcher can
+revise the input or recognize an unidentified exposure specification. It never
+drops a named regressor automatically. The JSON metadata records mutually
+exclusive drop counts, fixed-effect
 rank, connected components, residual degrees of freedom, cluster counts, and
 the residualization iteration count.
 
